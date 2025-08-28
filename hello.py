@@ -1,408 +1,152 @@
-# app.py
-import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-import yaml
-import re
-import pandas as pd
-import matplotlib.pyplot as plt
+# dashboard_backend.py
+"""
+Backend helpers for rendering the client-side dashboard.html from app.py.
+
+Usage:
+    from dashboard_backend import build_dashboard_html, render_dashboard_in_streamlit
+
+    # df is the DataFrame you prepared in your app (with columns like platform, username, text, keyword_hits, risk)
+    html = build_dashboard_html(df)
+    # then render using components.html(html, height=900, scrolling=True)
+    # OR simply call render_dashboard_in_streamlit(df) inside a Streamlit app.
+
+Functions:
+- build_dashboard_html(df, template_path, css_path, inline_css, include_wordcloud)
+- render_dashboard_in_streamlit(df, template_path, css_path, inline_css, height)
+- generate_wordcloud_image(text, out_path)
+"""
+
+import json
+import html as html_lib
+from pathlib import Path
 from wordcloud import WordCloud
-from textblob import TextBlob
-import networkx as nx
-import io
 import base64
-from datetime import datetime
-from collections import Counter
-import os
+import io
 
-st.set_page_config(page_title="Anti-India Campaign Detector", layout="wide")
+def _safe_json_for_html(obj):
+    """
+    Convert Python object to JSON string and make it safe to embed in a <script> tag.
+    Specifically escape closing tags so browser doesn't prematurely end scripts.
+    """
+    s = json.dumps(obj, ensure_ascii=False)
+    # Escape the sequence "</" which can break out of <script> contexts
+    s = s.replace("</", "<\\/")
+    return s
 
-# -----------------------------
-# Constants & default keywords
-# -----------------------------
-KEYWORD_FILE = "keywords.yaml"
-DEFAULT_KEYWORDS = [
-    {"term": "boycott india", "type": "phrase", "lang": "en", "weight": 4},
-    {"term": "#freekashmir", "type": "hashtag", "lang": "en", "weight": 5},
-    {"term": "down with india", "type": "phrase", "lang": "en", "weight": 4},
-    {"term": "anti-india", "type": "keyword", "lang": "en", "weight": 3},
-    {"term": "destroy india", "type": "phrase", "lang": "en", "weight": 5},
-    {"term": "traitor india", "type": "phrase", "lang": "en", "weight": 3},
-]
+def build_dashboard_html(df,
+                         template_path: str = "dashboard.html",
+                         css_path: str = "styles.css",
+                         inline_css: bool = False,
+                         include_wordcloud: bool = False,
+                         wordcloud_col: str = "text",
+                         wordcloud_output: str = "wordcloud.png",
+                         top_n: int = 1000):
+    """
+    Build HTML string with injected DATA placeholder replaced by your DF records.
 
-# -----------------------------
-# Keyword DB helpers
-# -----------------------------
-def ensure_keyword_file():
-    """Ensure keyword YAML exists; if not, create with defaults."""
-    if not os.path.exists(KEYWORD_FILE):
-        save_keywords(DEFAULT_KEYWORDS)
+    Parameters:
+    - df: pandas.DataFrame (should be analysis results; lists like keyword_hits will become JSON arrays)
+    - template_path: path to dashboard.html (contains {{DATA}})
+    - css_path: path to styles.css (if inline_css=True it will inline it)
+    - inline_css: if True, read styles.css and insert into <style>...</style> inside HTML (useful to keep single file)
+    - include_wordcloud: if True, generate a wordcloud (png) from `wordcloud_col` and embed it as data URI
+    - wordcloud_col: column from df used to build wordcloud (joined)
+    - wordcloud_output: filename used if you want to save to disk (optional)
+    - top_n: maximum number of rows to embed to prevent huge payloads
 
-def load_keywords():
+    Returns:
+    - html_with_data: string ready to pass to components.html(...)
+    """
+    # Lazy import pandas inside function to avoid hard dependency when not used
     try:
-        if os.path.exists(KEYWORD_FILE):
-            with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or []
-                # normalize to list of dicts
-                return data if isinstance(data, list) else []
-        else:
-            return DEFAULT_KEYWORDS.copy()
-    except Exception:
-        return DEFAULT_KEYWORDS.copy()
-
-def save_keywords(keywords):
-    try:
-        with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
-            yaml.safe_dump(keywords, f, allow_unicode=True)
-        return True
+        import pandas as pd
     except Exception as e:
-        st.error(f"Error saving keywords: {e}")
-        return False
+        raise RuntimeError("pandas required to use build_dashboard_html") from e
 
-# Ensure file exists on start
-ensure_keyword_file()
-keywords = load_keywords()
+    tpl_path = Path(template_path)
+    if not tpl_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
 
-# -----------------------------
-# Scraping & analysis helpers
-# -----------------------------
-HEADERS = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    html_text = tpl_path.read_text(encoding="utf-8")
 
-def extract_text_from_url(url, timeout=10):
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3"])]
-        text = " ".join([t for t in paragraphs if t])
-        return text
-    except Exception:
-        return ""
-
-def keyword_hits(text, keywords):
-    text_l = text.lower()
-    hits = []
-    strength = 0
-    for k in keywords:
-        term = str(k.get("term","")).lower()
-        weight = k.get("weight", 1) if k.get("weight") is not None else 1
-        if not term:
-            continue
-        if term.startswith("#"):
-            words = re.findall(r"\B#\w+", text_l)
-            if term in words:
-                hits.append(term)
-                strength += weight
+    # optionally inline CSS
+    if inline_css:
+        css_file = Path(css_path)
+        if css_file.exists():
+            css_text = css_file.read_text(encoding="utf-8")
+            # naive insertion: replace <link rel="stylesheet" href="styles.css"> with <style>...</style>
+            html_text = html_text.replace(f'<link rel="stylesheet" href="{css_path}">', f"<style>\n{css_text}\n</style>")
         else:
-            if re.search(rf"\b{re.escape(term)}\b", text_l):
-                hits.append(term)
-                strength += weight
-    return list(set(hits)), strength
+            # remove link tag if css not found
+            html_text = html_text.replace(f'<link rel="stylesheet" href="{css_path}">', "")
 
-def sentiment_score(text):
-    try:
-        return TextBlob(text).sentiment.polarity
-    except Exception:
-        return 0.0
-
-def compute_risk(keyword_strength, sentiment, engagement_norm=0.0, account_suspicion=0.0):
-    k_norm = min(1.0, keyword_strength / 8.0)
-    neg = max(0.0, -sentiment)
-    w_k, w_e, w_t, w_a = 0.45, 0.2, 0.2, 0.15
-    risk = w_k * k_norm + w_e * engagement_norm + w_t * neg + w_a * account_suspicion
-    return min(1.0, risk)
-
-def highlight_sentences(text, hits):
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    highlighted = []
-    lower_hits = [h.lower() for h in hits]
-    for s in sentences:
-        s_l = s.lower()
-        if any(h in s_l for h in lower_hits):
-            highlighted.append(s.strip())
-    return highlighted
-
-def account_suspicion_from_row(row):
-    score = 0.0
-    try:
-        followers = float(row.get("followers", 0) or 0)
-        if followers < 50:
-            score += 0.5
-        elif followers < 300:
-            score += 0.2
-    except Exception:
-        pass
-    try:
-        created = row.get("created_at", None)
-        if created:
-            try:
-                dt = datetime.strptime(str(created).split("T")[0], "%Y-%m-%d")
-                if (datetime.now() - dt).days < 365:
-                    score += 0.3
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return min(1.0, score)
-
-# -----------------------------
-# SIDEBAR: Keyword Manager UI
-# -----------------------------
-st.sidebar.title("Config & Keyword DB")
-st.sidebar.write("Manage the dynamic keyword DB for suspected anti-India terms.")
-
-# Show current keywords in table
-st.sidebar.subheader("Current Keywords")
-if keywords:
-    # convert to DataFrame for nice display
-    try:
-        df_kw = pd.DataFrame(keywords)
-        st.sidebar.dataframe(df_kw.reset_index(drop=True))
-    except Exception:
-        for k in keywords:
-            st.sidebar.write(f"- {k.get('term')} ({k.get('type')}, w={k.get('weight')})")
-else:
-    st.sidebar.info("No keywords available.")
-
-# Add new keyword form (must contain 'india')
-st.sidebar.subheader("Add New Keyword")
-with st.sidebar.form("add_keyword_form", clear_on_submit=True):
-    new_term = st.text_input("Keyword / phrase (must contain 'india')").strip()
-    new_type = st.selectbox("Type", ["phrase", "hashtag", "keyword", "word"])
-    new_lang = st.selectbox("Language", ["en", "hi", "ur"], index=0)
-    new_weight = st.number_input("Weight (1-10)", min_value=1, max_value=10, value=3)
-    add_submitted = st.form_submit_button("Add")
-
-    if add_submitted:
-        if not new_term:
-            st.sidebar.error("Please enter a term.")
-        elif "india" not in new_term.lower():
-            st.sidebar.error("Only terms containing 'india' are allowed.")
-        else:
-            # avoid duplicates
-            existing_terms = [k.get("term","").lower() for k in keywords]
-            if new_term.lower() in existing_terms:
-                st.sidebar.warning("Term already exists.")
-            else:
-                keywords.append({
-                    "term": new_term,
-                    "type": new_type,
-                    "lang": new_lang,
-                    "weight": int(new_weight)
-                })
-                if save_keywords(keywords):
-                    st.sidebar.success(f"Added: {new_term}")
-                else:
-                    st.sidebar.error("Failed to save. Check permissions.")
-                # reload keywords for consistent view
-                keywords = load_keywords()
-
-# Delete keywords (multi-select)
-st.sidebar.subheader("Delete Keywords")
-terms_for_delete = [k.get("term","") for k in keywords]
-del_selection = st.sidebar.multiselect("Select terms to delete", options=terms_for_delete)
-if st.sidebar.button("Delete selected"):
-    if del_selection:
-        keywords = [k for k in keywords if k.get("term","") not in del_selection]
-        if save_keywords(keywords):
-            st.sidebar.success("Deleted selected terms.")
-        else:
-            st.sidebar.error("Failed to save deletion.")
-        keywords = load_keywords()
+    # build records (safely choose top rows)
+    if df is None:
+        records = []
     else:
-        st.sidebar.info("No terms selected for deletion.")
+        # Ensure keyword_hits is JSON serializable
+        tmp = df.fillna("").copy()
+        # truncate large text to avoid massive payloads
+        if 'text' in tmp.columns:
+            tmp['text'] = tmp['text'].astype(str).apply(lambda s: s if len(s) <= 2000 else s[:2000] + "…")
+        records = tmp.head(top_n).to_dict(orient="records")
 
-st.sidebar.markdown("---")
-st.sidebar.write("⚠️ Note: This app edits a local `keywords.yaml`. On cloud hosts, filesystem persistence can be ephemeral across deploys. Keep a backup in your repo.")
+    # Optionally include wordcloud as data URI and place into records as 'wordcloud_image_data'
+    if include_wordcloud and not df is None and wordcloud_col in df.columns:
+        all_text = " ".join(df[wordcloud_col].astype(str).fillna("").tolist())
+        try:
+            img_bytes = generate_wordcloud_image_bytes(all_text)
+            data_uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
+            # put in a top-level variable accessible from the HTML by searching for KEYWORD 'WORDCLOUD_DATA'
+            # We'll simply replace a placeholder if present: {{WORDCLOUD_DATA}}
+            html_text = html_text.replace("{{WORDCLOUD_DATA}}", f"'{data_uri}'")
+        except Exception:
+            html_text = html_text.replace("{{WORDCLOUD_DATA}}", "null")
+    else:
+        html_text = html_text.replace("{{WORDCLOUD_DATA}}", "null")
 
-# -----------------------------
-# MAIN UI
-# -----------------------------
-st.title("🛡️ Anti-India Campaign Detection — Prototype")
-st.write("Paste website URLs (comma-separated) or upload a CSV/JSON with posts. The app will extract text, check flagged terms (from sidebar DB), compute risk, run sentiment, and highlight suspicious sentences.")
+    # inject data JSON safely
+    safe_json = _safe_json_for_html(records)
+    # Replace the placeholder exactly "{{DATA}}"
+    if "{{DATA}}" not in html_text:
+        # if user used different placeholder, try to be forgiving
+        html_text += f"\n<!-- DATA: -->\n<script>const DATA = {safe_json};</script>\n"
+    else:
+        html_with_data = html_text.replace("{{DATA}}", safe_json)
+        return html_with_data
 
-col1, col2 = st.columns([1,1])
-with col1:
-    url_input = st.text_input("Enter website URL(s) (comma-separated):")
-    scan_button = st.button("Scan URL(s)")
-with col2:
-    uploaded_file = st.file_uploader("Or upload CSV with: platform, username, text, likes, shares, comments, followers, created_at", type=["csv","json"])
-    run_file = st.button("Analyze File")
+    return html_text
 
-def process_single_text(source_label, text, keywords, extra_meta=None):
-    hits, k_strength = keyword_hits(text, keywords)
-    sent = sentiment_score(text)
-    highlights = highlight_sentences(text, hits)
-    risk = compute_risk(k_strength, sent, engagement_norm=0.0, account_suspicion=0.0)
-    return {
-        "source": source_label,
-        "keyword_hits": hits,
-        "keyword_strength": k_strength,
-        "sentiment": sent,
-        "highlights": highlights,
-        "risk": risk,
-        "raw_text": text
-    }
+def generate_wordcloud_image_bytes(text, width=900, height=300, max_words=200):
+    """
+    Generate a wordcloud image and return PNG bytes.
+    """
+    wc = WordCloud(width=width, height=height, background_color="white", max_words=max_words)
+    img = wc.generate(text or " ")
+    buf = io.BytesIO()
+    img.to_image().save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
 
-# Scan URLs
-if scan_button and url_input:
-    urls = [u.strip() for u in url_input.split(",") if u.strip()]
-    results = []
-    with st.spinner("Fetching and scanning URLs..."):
-        for u in urls:
-            text = extract_text_from_url(u)
-            if not text:
-                st.warning(f"Could not extract text from: {u}")
-                continue
-            res = process_single_text(u, text, keywords)
-            results.append(res)
+# Convenience function to render directly in Streamlit
+def render_dashboard_in_streamlit(df,
+                                  template_path: str = "dashboard.html",
+                                  css_path: str = "styles.css",
+                                  inline_css: bool = False,
+                                  include_wordcloud: bool = False,
+                                  height: int = 880,
+                                  top_n: int = 1000):
+    """
+    Build HTML and call components.html(...) to render in Streamlit.
+    Must be called from a running Streamlit context.
+    """
+    import streamlit as st
+    import streamlit.components.v1 as components
 
-    if results:
-        for r in results:
-            st.subheader(f"Source: {r['source']}")
-            st.metric("Risk score", f"{r['risk']*100:.1f}%")
-            st.write("**Keyword hits:**", r['keyword_hits'] or "None")
-            st.write("**Sentiment polarity:**", f"{r['sentiment']:.3f}  (-1 negative .. +1 positive)")
-            if r['highlights']:
-                st.markdown("**Highlighted suspicious sentences:**")
-                for sent in r['highlights']:
-                    st.info(sent)
-            else:
-                st.write("No suspicious sentences highlighted.")
-            # wordcloud (if text available)
-            try:
-                wc = WordCloud(width=600, height=250, background_color="white").generate(r['raw_text'][:10000])
-                fig, ax = plt.subplots(figsize=(8,3))
-                ax.imshow(wc, interpolation="bilinear")
-                ax.axis("off")
-                st.pyplot(fig)
-            except Exception:
-                pass
-
-# Analyze uploaded CSV/JSON
-if run_file and uploaded_file:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_json(uploaded_file)
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        df = None
-
-    if df is not None and not df.empty:
-        st.success("File loaded. Running analysis...")
-        if "text" not in df.columns:
-            st.error("Uploaded file must have a 'text' column.")
-        else:
-            df['text'] = df['text'].astype(str).fillna("")
-            keyword_list_per_row = []
-            k_strengths = []
-            sentiments = []
-            suspicion_scores = []
-            engagements = []
-            hashtags_all = []
-
-            for idx, row in df.iterrows():
-                text = row['text']
-                hits, ks = keyword_hits(text, keywords)
-                s = sentiment_score(text)
-                keyword_list_per_row.append(hits)
-                k_strengths.append(ks)
-                sentiments.append(s)
-                suspicion_scores.append(account_suspicion_from_row(row))
-                likes = float(row.get("likes", 0) or 0)
-                shares = float(row.get("shares", 0) or 0)
-                comments = float(row.get("comments", 0) or 0)
-                followers = float(row.get("followers", 0) or 0)
-                pe = (likes + 2*shares + 3*comments) / (1 + (followers if followers>0 else 1))
-                engagements.append(pe)
-                tags = re.findall(r"\B#\w+", text.lower())
-                hashtags_all.extend(tags)
-
-            max_eng = max(engagements) if engagements else 1
-            eng_norm = [e / max_eng if max_eng > 0 else 0 for e in engagements]
-
-            risk_scores = []
-            for i in range(len(df)):
-                r = compute_risk(k_strengths[i], sentiments[i], engagement_norm=eng_norm[i], account_suspicion=suspicion_scores[i])
-                risk_scores.append(r)
-
-            df['keyword_hits'] = keyword_list_per_row
-            df['keyword_strength'] = k_strengths
-            df['sentiment'] = sentiments
-            df['eng_norm'] = eng_norm
-            df['suspicion'] = suspicion_scores
-            df['risk'] = risk_scores
-
-            st.subheader("Top flagged posts by risk")
-            cols = ['platform' if 'platform' in df.columns else None,
-                    'username' if 'username' in df.columns else None,
-                    'text',
-                    'likes' if 'likes' in df.columns else None,
-                    'shares' if 'shares' in df.columns else None,
-                    'comments' if 'comments' in df.columns else None,
-                    'followers' if 'followers' in df.columns else None,
-                    'keyword_hits','risk']
-            cols = [c for c in cols if c is not None]
-            topk = df.sort_values(by="risk", ascending=False).head(15)[cols]
-            st.dataframe(topk.fillna(""))
-
-            st.subheader("Dashboard Summary")
-            c1, c2, c3 = st.columns([1,1,1])
-            with c1:
-                counts = [
-                    sum(df['risk']<0.2),
-                    sum((df['risk']>=0.2)&(df['risk']<0.6)),
-                    sum(df['risk']>=0.6)
-                ]
-                plt.figure(figsize=(4,3))
-                plt.pie(counts, labels=["Low","Medium","High"], autopct="%1.1f%%", startangle=90)
-                plt.title("Risk distribution")
-                st.pyplot(plt)
-
-            with c2:
-                top_tags = Counter(hashtags_all).most_common(15)
-                if top_tags:
-                    tags_df = pd.DataFrame(top_tags, columns=['hashtag','count'])
-                    st.bar_chart(data=tags_df.set_index('hashtag'))
-                else:
-                    st.write("No hashtags detected in dataset.")
-
-            with c3:
-                st.write("Sentiment polarity distribution")
-                fig2 = plt.figure(figsize=(4,3))
-                plt.hist(df['sentiment'], bins=20)
-                st.pyplot(fig2)
-
-            if 'username' in df.columns:
-                G = nx.Graph()
-                for _, row in df.iterrows():
-                    uname = str(row.get("username","")).strip()
-                    tags = row.get("keyword_hits",[]) or []
-                    tags = tags + re.findall(r"\B#\w+", str(row.get("text","")).lower())
-                    for t in tags:
-                        G.add_edge(uname, t)
-                if G.number_of_nodes() > 0:
-                    st.subheader("Author-Hashtag Network (small view)")
-                    fig, ax = plt.subplots(figsize=(8,5))
-                    pos = nx.spring_layout(G, k=0.6, iterations=50)
-                    nx.draw(G, pos=pos, with_labels=True, node_size=200, font_size=8)
-                    st.pyplot(fig)
-                else:
-                    st.write("Not enough data for network graph (need 'username' and hashtags).")
-
-            csv = df.to_csv(index=False)
-            b64 = base64.b64encode(csv.encode()).decode()
-            st.markdown("### Download analysis results")
-            href = f'<a href="data:file/csv;base64,{b64}" download="analysis_results.csv">Download CSV</a>'
-            st.markdown(href, unsafe_allow_html=True)
-
-# Footer
-st.markdown("---")
-st.markdown("**Notes & next steps:**")
-st.markdown("""
-- This is a prototype: keyword matching + simple sentiment is used for early detection.
-- For production: replace/augment sentiment with transformer models, add rate-limited API ingestors, store in DB, and implement real-time alerts (webhooks/email).
-- Always analyze only public content and respect ToS & robots.txt.
-""")
+    html = build_dashboard_html(df,
+                                template_path=template_path,
+                                css_path=css_path,
+                                inline_css=inline_css,
+                                include_wordcloud=include_wordcloud,
+                                top_n=top_n)
+    components.html(html, height=height, scrolling=True)
