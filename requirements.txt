@@ -6,3 +6,6 @@ textblob
 matplotlib
 nltk
 pyyaml
+networkx
+pandas
+numpy
