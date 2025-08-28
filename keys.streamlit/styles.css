@@ -1,39 +1,11 @@
-:root{
-  --bg:#f7f8fb;
-  --card:#ffffff;
-  --muted:#6b7280;
-  --accent:#1f6feb;
-  --danger:#ef4444;
-  --success:#10b981;
+body {
+  background: #fafafa;
+  padding: 20px;
 }
-*{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;}
-body{margin:0;background:var(--bg);color:#111;}
-.container{max-width:1100px;margin:0 auto;padding:18px;}
-.topbar{background:linear-gradient(90deg,#ffffff88, #f2f6ff);border-bottom:1px solid #e6e9f2;}
-.topbar h1{margin:12px 0 0 0;font-size:20px;}
-.subtitle{margin:0 0 12px 0;color:var(--muted);font-size:13px;}
 
-.grid{display:grid;grid-template-columns:1fr;gap:18px;padding-top:12px;}
-@media(min-width:900px){ .grid{grid-template-columns:2fr 1fr;} .panel{grid-column:span 1;} .cards{grid-column:span 2;} }
-
-.cards{display:flex;gap:12px;align-items:stretch;}
-.card{flex:1;background:var(--card);padding:18px;border-radius:10px;box-shadow:0 6px 18px rgba(12,20,40,0.04);text-align:center;}
-.card h3{margin:0;font-size:14px;color:var(--muted);}
-.big{font-size:28px;margin:8px 0 0 0;font-weight:700;color:#111;}
-
-.panel{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(12,20,40,0.04);}
-.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-.panel-head h2{margin:0;font-size:16px;}
-.controls{display:flex;gap:12px;align-items:center;}
-.controls input[type="range"]{width:160px;}
-.controls input[type="text"], .controls input[type="search"], input#search{padding:6px 8px;border-radius:6px;border:1px solid #e6e9f2;}
-
-.table-wrap{max-height:400px;overflow:auto;}
-table{width:100%;border-collapse:collapse;font-size:13px;}
-thead th{position:sticky;top:0;background:#fff;padding:8px;text-align:left;border-bottom:1px solid #edf0f6;}
-tbody td{padding:8px;border-bottom:1px solid #f1f4f9;vertical-align:top;}
-.tag-list{display:flex;flex-wrap:wrap;gap:8px;padding-top:8px;}
-.tag{background:#f3f6ff;padding:6px 10px;border-radius:999px;font-size:13px;border:1px solid #eef3ff;}
-
-.footer{padding:14px 18px;text-align:center;color:var(--muted);font-size:12px;border-top:1px solid #eef2f7;margin-top:18px;}
-pre{background:#0b1220;color:#e6eefc;padding:12px;border-radius:8px;overflow:auto;max-height:250px;}
+table {
+  background: white;
+  box-shadow: 0px 4px 12px rgba(0,0,0,0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
