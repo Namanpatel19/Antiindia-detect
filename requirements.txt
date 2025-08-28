@@ -5,3 +5,4 @@ wordcloud
 textblob
 matplotlib
 nltk
+pyyaml
