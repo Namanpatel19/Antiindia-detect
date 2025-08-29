@@ -43,7 +43,6 @@ def load_keywords():
         if os.path.exists(KEYWORD_FILE):
             with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or []
-                # normalize to list of dicts
                 return data if isinstance(data, list) else []
         else:
             return DEFAULT_KEYWORDS.copy()
@@ -64,6 +63,31 @@ ensure_keyword_file()
 keywords = load_keywords()
 
 # -----------------------------
+# Text Normalization (leet-speak → normal words)
+# -----------------------------
+def normalize_text(text: str) -> str:
+    replacements = {
+        "@": "a",
+        "1": "i",
+        "!": "i",
+        "$": "s",
+        "0": "o",
+        "+": "t",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+        "|": "i",
+        "€": "e",
+        "£": "l",
+    }
+    norm = text.lower()
+    for k, v in replacements.items():
+        norm = norm.replace(k, v)
+    norm = re.sub(r"[\_\-\.\,]", "", norm)  # remove separators
+    return norm
+
+# -----------------------------
 # Scraping & analysis helpers
 # -----------------------------
 HEADERS = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -80,7 +104,7 @@ def extract_text_from_url(url, timeout=10):
         return ""
 
 def keyword_hits(text, keywords):
-    text_l = text.lower()
+    text_norm = normalize_text(text)
     hits = []
     strength = 0
     for k in keywords:
@@ -88,13 +112,14 @@ def keyword_hits(text, keywords):
         weight = k.get("weight", 1) if k.get("weight") is not None else 1
         if not term:
             continue
-        if term.startswith("#"):
-            words = re.findall(r"\B#\w+", text_l)
-            if term in words:
+        term_norm = normalize_text(term)
+        if term_norm.startswith("#"):
+            words = re.findall(r"\B#\w+", text_norm)
+            if term_norm in words:
                 hits.append(term)
                 strength += weight
         else:
-            if re.search(rf"\b{re.escape(term)}\b", text_l):
+            if re.search(rf"\b{re.escape(term_norm)}\b", text_norm):
                 hits.append(term)
                 strength += weight
     return list(set(hits)), strength
@@ -151,10 +176,8 @@ def account_suspicion_from_row(row):
 st.sidebar.title("Config & Keyword DB")
 st.sidebar.write("Manage the dynamic keyword DB for suspected anti-India terms.")
 
-# Show current keywords in table
 st.sidebar.subheader("Current Keywords")
 if keywords:
-    # convert to DataFrame for nice display
     try:
         df_kw = pd.DataFrame(keywords)
         st.sidebar.dataframe(df_kw.reset_index(drop=True))
@@ -164,7 +187,6 @@ if keywords:
 else:
     st.sidebar.info("No keywords available.")
 
-# Add new keyword form (must contain 'india')
 st.sidebar.subheader("Add New Keyword")
 with st.sidebar.form("add_keyword_form", clear_on_submit=True):
     new_term = st.text_input("Keyword / phrase (must contain 'india')").strip()
@@ -179,7 +201,6 @@ with st.sidebar.form("add_keyword_form", clear_on_submit=True):
         elif "india" not in new_term.lower():
             st.sidebar.error("Only terms containing 'india' are allowed.")
         else:
-            # avoid duplicates
             existing_terms = [k.get("term","").lower() for k in keywords]
             if new_term.lower() in existing_terms:
                 st.sidebar.warning("Term already exists.")
@@ -194,10 +215,8 @@ with st.sidebar.form("add_keyword_form", clear_on_submit=True):
                     st.sidebar.success(f"Added: {new_term}")
                 else:
                     st.sidebar.error("Failed to save. Check permissions.")
-                # reload keywords for consistent view
                 keywords = load_keywords()
 
-# Delete keywords (multi-select)
 st.sidebar.subheader("Delete Keywords")
 terms_for_delete = [k.get("term","") for k in keywords]
 del_selection = st.sidebar.multiselect("Select terms to delete", options=terms_for_delete)
@@ -213,13 +232,13 @@ if st.sidebar.button("Delete selected"):
         st.sidebar.info("No terms selected for deletion.")
 
 st.sidebar.markdown("---")
-st.sidebar.write("⚠️ Note: This app edits a local `keywords.yaml`. On cloud hosts, filesystem persistence can be ephemeral across deploys. Keep a backup in your repo.")
+st.sidebar.write("⚠️ Note: This app edits a local `keywords.yaml`. On cloud hosts, persistence may reset. Keep a backup.")
 
 # -----------------------------
 # MAIN UI
 # -----------------------------
 st.title("🛡️ Anti-India Campaign Detection — Prototype")
-st.write("Paste website URLs (comma-separated) or upload a CSV/JSON with posts. The app will extract text, check flagged terms (from sidebar DB), compute risk, run sentiment, and highlight suspicious sentences.")
+st.write("Paste website URLs or upload a CSV/JSON. The app will normalize text, detect obfuscated keywords, compute risk, run sentiment, and highlight suspicious sentences.")
 
 col1, col2 = st.columns([1,1])
 with col1:
@@ -244,7 +263,9 @@ def process_single_text(source_label, text, keywords, extra_meta=None):
         "raw_text": text
     }
 
-# Scan URLs
+# -----------------------------
+# URL scanning
+# -----------------------------
 if scan_button and url_input:
     urls = [u.strip() for u in url_input.split(",") if u.strip()]
     results = []
@@ -262,14 +283,13 @@ if scan_button and url_input:
             st.subheader(f"Source: {r['source']}")
             st.metric("Risk score", f"{r['risk']*100:.1f}%")
             st.write("**Keyword hits:**", r['keyword_hits'] or "None")
-            st.write("**Sentiment polarity:**", f"{r['sentiment']:.3f}  (-1 negative .. +1 positive)")
+            st.write("**Sentiment polarity:**", f"{r['sentiment']:.3f}")
             if r['highlights']:
                 st.markdown("**Highlighted suspicious sentences:**")
                 for sent in r['highlights']:
                     st.info(sent)
             else:
                 st.write("No suspicious sentences highlighted.")
-            # wordcloud (if text available)
             try:
                 wc = WordCloud(width=600, height=250, background_color="white").generate(r['raw_text'][:10000])
                 fig, ax = plt.subplots(figsize=(8,3))
@@ -279,7 +299,9 @@ if scan_button and url_input:
             except Exception:
                 pass
 
-# Analyze uploaded CSV/JSON
+# -----------------------------
+# File analysis
+# -----------------------------
 if run_file and uploaded_file:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -317,7 +339,7 @@ if run_file and uploaded_file:
                 followers = float(row.get("followers", 0) or 0)
                 pe = (likes + 2*shares + 3*comments) / (1 + (followers if followers>0 else 1))
                 engagements.append(pe)
-                tags = re.findall(r"\B#\w+", text.lower())
+                tags = re.findall(r"\B#\w+", normalize_text(text))
                 hashtags_all.extend(tags)
 
             max_eng = max(engagements) if engagements else 1
@@ -380,7 +402,7 @@ if run_file and uploaded_file:
                 for _, row in df.iterrows():
                     uname = str(row.get("username","")).strip()
                     tags = row.get("keyword_hits",[]) or []
-                    tags = tags + re.findall(r"\B#\w+", str(row.get("text","")).lower())
+                    tags = tags + re.findall(r"\B#\w+", normalize_text(str(row.get("text",""))))
                     for t in tags:
                         G.add_edge(uname, t)
                 if G.number_of_nodes() > 0:
@@ -390,7 +412,7 @@ if run_file and uploaded_file:
                     nx.draw(G, pos=pos, with_labels=True, node_size=200, font_size=8)
                     st.pyplot(fig)
                 else:
-                    st.write("Not enough data for network graph (need 'username' and hashtags).")
+                    st.write("Not enough data for network graph.")
 
             csv = df.to_csv(index=False)
             b64 = base64.b64encode(csv.encode()).decode()
@@ -402,7 +424,7 @@ if run_file and uploaded_file:
 st.markdown("---")
 st.markdown("**Notes & next steps:**")
 st.markdown("""
-- This is a prototype: keyword matching + simple sentiment is used for early detection.
-- For production: replace/augment sentiment with transformer models, add rate-limited API ingestors, store in DB, and implement real-time alerts (webhooks/email).
+- This is a prototype: keyword matching + sentiment + normalization.
+- For production: replace sentiment with transformer models, add API ingestors, DB storage, and alerts.
 - Always analyze only public content and respect ToS & robots.txt.
 """)
