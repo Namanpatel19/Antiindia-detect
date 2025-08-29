@@ -29,7 +29,7 @@ from collections import Counter
 # CONFIG - paste your API key here
 # -----------------------------
 # >>> REPLACE the placeholder below with your real Gemini API key <<<
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE"
+GEMINI_API_KEY = "AIzaSyAUbZZN-w1GcE_M80IDAg9vf-8poJFm43c"
 
 # Gemini REST endpoint used in this app (model: gemini-2.0-flash)
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
