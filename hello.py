@@ -32,8 +32,8 @@ import google.generativeai as genai
 # CONFIG - paste your API key here
 # -----------------------------
 # >>> REPLACE the placeholder below with your real Gemini API key <<<
-GEMINI_API_KEY = st.secrets["api_keys"]["gemini"]
-genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_API_KEY = st.secrets["gemini"]
+
 
 
 # Gemini REST endpoint used in this app (model: gemini-2.0-flash)
