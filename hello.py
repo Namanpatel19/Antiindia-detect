@@ -14,6 +14,8 @@ import base64
 from datetime import datetime
 from collections import Counter
 import os
+import time
+import json
 
 st.set_page_config(page_title="Anti-India Campaign Detector", layout="wide")
 
@@ -63,29 +65,73 @@ ensure_keyword_file()
 keywords = load_keywords()
 
 # -----------------------------
-# Text Normalization (leet-speak → normal words)
+# Gemini helper (use Streamlit secrets or environment var)
 # -----------------------------
-def normalize_text(text: str) -> str:
-    replacements = {
-        "@": "a",
-        "1": "i",
-        "!": "i",
-        "$": "s",
-        "0": "o",
-        "+": "t",
-        "3": "e",
-        "4": "a",
-        "5": "s",
-        "7": "t",
-        "|": "i",
-        "€": "e",
-        "£": "l",
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+def get_gemini_api_key():
+    # prefer Streamlit secrets
+    try:
+        return st.secrets["gemini"]["api_key"]
+    except Exception:
+        return os.environ.get("GEMINI_API_KEY", None)
+
+def call_gemini_classify(text, timeout=20):
+    """
+    Call Gemini API to classify text as Safe or Anti-India.
+    Returns (label, explanation).
+    """
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return ("NoKey", "Gemini API key not configured. Set in Streamlit secrets or GEMINI_API_KEY env var.")
+
+    prompt = (
+        "Classify the following text for whether it contains anti-India propaganda, calls for boycott/violence "
+        "or coordinated disinformation targeted at India. Return a short JSON object with keys: label (Safe or Anti-India Detected), "
+        "confidence (0-1), explanation (1-2 sentences).\n\n"
+        f"Text:\n{text}"
+    )
+
+    payload = {"contents":[{"parts":[{"text": prompt}]}]}
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": api_key
     }
-    norm = text.lower()
-    for k, v in replacements.items():
-        norm = norm.replace(k, v)
-    norm = re.sub(r"[\_\-\.\,]", "", norm)  # remove separators
-    return norm
+
+    try:
+        resp = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=timeout)
+    except Exception as e:
+        return ("Error", f"Request failed: {e}")
+
+    if resp.status_code != 200:
+        return ("Error", f"API {resp.status_code}: {resp.text[:400]}")
+
+    try:
+        j = resp.json()
+        # extract text response
+        ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","").strip()
+        # try to parse JSON inside response
+        try:
+            parsed = json.loads(ai_text)
+            label = parsed.get("label","").strip() or "Unknown"
+            explanation = parsed.get("explanation","").strip() or ai_text
+            confidence = parsed.get("confidence", None)
+            if confidence is None:
+                return (label, explanation)
+            else:
+                return (f"{label} ({confidence})", explanation)
+        except Exception:
+            # fallback: heuristic extraction
+            txtlower = ai_text.lower()
+            if "anti-india" in txtlower or "boycott" in txtlower or "violence" in txtlower or "propaganda" in txtlower:
+                return ("Anti-India Detected", ai_text)
+            if "safe" in txtlower and "anti" not in txtlower:
+                return ("Safe", ai_text)
+            # fallback unknown
+            return ("Unknown", ai_text)
+    except Exception as e:
+        return ("Error", f"Parsing response failed: {e}")
 
 # -----------------------------
 # Scraping & analysis helpers
@@ -104,7 +150,7 @@ def extract_text_from_url(url, timeout=10):
         return ""
 
 def keyword_hits(text, keywords):
-    text_norm = normalize_text(text)
+    text_l = text.lower()
     hits = []
     strength = 0
     for k in keywords:
@@ -112,14 +158,13 @@ def keyword_hits(text, keywords):
         weight = k.get("weight", 1) if k.get("weight") is not None else 1
         if not term:
             continue
-        term_norm = normalize_text(term)
-        if term_norm.startswith("#"):
-            words = re.findall(r"\B#\w+", text_norm)
-            if term_norm in words:
+        if term.startswith("#"):
+            words = re.findall(r"\B#\w+", text_l)
+            if term in words:
                 hits.append(term)
                 strength += weight
         else:
-            if re.search(rf"\b{re.escape(term_norm)}\b", text_norm):
+            if re.search(rf"\b{re.escape(term)}\b", text_l):
                 hits.append(term)
                 strength += weight
     return list(set(hits)), strength
@@ -171,11 +216,12 @@ def account_suspicion_from_row(row):
     return min(1.0, score)
 
 # -----------------------------
-# SIDEBAR: Keyword Manager UI
+# SIDEBAR: Keyword Manager UI + AI toggle
 # -----------------------------
 st.sidebar.title("Config & Keyword DB")
 st.sidebar.write("Manage the dynamic keyword DB for suspected anti-India terms.")
 
+# Show current keywords in table
 st.sidebar.subheader("Current Keywords")
 if keywords:
     try:
@@ -187,6 +233,7 @@ if keywords:
 else:
     st.sidebar.info("No keywords available.")
 
+# Add new keyword form (must contain 'india')
 st.sidebar.subheader("Add New Keyword")
 with st.sidebar.form("add_keyword_form", clear_on_submit=True):
     new_term = st.text_input("Keyword / phrase (must contain 'india')").strip()
@@ -217,6 +264,7 @@ with st.sidebar.form("add_keyword_form", clear_on_submit=True):
                     st.sidebar.error("Failed to save. Check permissions.")
                 keywords = load_keywords()
 
+# Delete keywords (multi-select)
 st.sidebar.subheader("Delete Keywords")
 terms_for_delete = [k.get("term","") for k in keywords]
 del_selection = st.sidebar.multiselect("Select terms to delete", options=terms_for_delete)
@@ -232,13 +280,14 @@ if st.sidebar.button("Delete selected"):
         st.sidebar.info("No terms selected for deletion.")
 
 st.sidebar.markdown("---")
-st.sidebar.write("⚠️ Note: This app edits a local `keywords.yaml`. On cloud hosts, persistence may reset. Keep a backup.")
+use_ai = st.sidebar.checkbox("Enable Gemini AI classification (use secrets)", value=False)
+st.sidebar.write("⚠️ Note: This app edits a local `keywords.yaml`. On cloud hosts, filesystem persistence can be ephemeral across deploys. Keep a backup in your repo.")
 
 # -----------------------------
 # MAIN UI
 # -----------------------------
 st.title("🛡️ Anti-India Campaign Detection — Prototype")
-st.write("Paste website URLs or upload a CSV/JSON. The app will normalize text, detect obfuscated keywords, compute risk, run sentiment, and highlight suspicious sentences.")
+st.write("Paste website URLs (comma-separated) or upload a CSV/JSON with posts. The app will extract text, check flagged terms (from sidebar DB), compute risk, run sentiment, and highlight suspicious sentences. Toggle AI to add Gemini classification.")
 
 col1, col2 = st.columns([1,1])
 with col1:
@@ -248,11 +297,20 @@ with col2:
     uploaded_file = st.file_uploader("Or upload CSV with: platform, username, text, likes, shares, comments, followers, created_at", type=["csv","json"])
     run_file = st.button("Analyze File")
 
-def process_single_text(source_label, text, keywords, extra_meta=None):
+def process_single_text(source_label, text, keywords, extra_meta=None, ai_enabled=False):
     hits, k_strength = keyword_hits(text, keywords)
     sent = sentiment_score(text)
     highlights = highlight_sentences(text, hits)
     risk = compute_risk(k_strength, sent, engagement_norm=0.0, account_suspicion=0.0)
+
+    ai_label, ai_expl = None, None
+    if ai_enabled:
+        # call AI only when there is some keyword hit or medium risk to save quota
+        should_call = (k_strength > 0) or (risk >= 0.25)
+        if should_call:
+            ai_label, ai_expl = call_gemini_classify(text)
+            # small delay guard to not exceed immediate rate
+            time.sleep(0.2)
     return {
         "source": source_label,
         "keyword_hits": hits,
@@ -260,12 +318,12 @@ def process_single_text(source_label, text, keywords, extra_meta=None):
         "sentiment": sent,
         "highlights": highlights,
         "risk": risk,
-        "raw_text": text
+        "raw_text": text,
+        "ai_label": ai_label,
+        "ai_explanation": ai_expl
     }
 
-# -----------------------------
-# URL scanning
-# -----------------------------
+# Scan URLs
 if scan_button and url_input:
     urls = [u.strip() for u in url_input.split(",") if u.strip()]
     results = []
@@ -275,7 +333,7 @@ if scan_button and url_input:
             if not text:
                 st.warning(f"Could not extract text from: {u}")
                 continue
-            res = process_single_text(u, text, keywords)
+            res = process_single_text(u, text, keywords, ai_enabled=use_ai)
             results.append(res)
 
     if results:
@@ -283,13 +341,22 @@ if scan_button and url_input:
             st.subheader(f"Source: {r['source']}")
             st.metric("Risk score", f"{r['risk']*100:.1f}%")
             st.write("**Keyword hits:**", r['keyword_hits'] or "None")
-            st.write("**Sentiment polarity:**", f"{r['sentiment']:.3f}")
+            st.write("**Sentiment polarity:**", f"{r['sentiment']:.3f}  (-1 negative .. +1 positive)")
+            if r['ai_label']:
+                if r['ai_label'].startswith("Anti-India"):
+                    st.error(f"AI: {r['ai_label']}")
+                elif r['ai_label'].startswith("Safe"):
+                    st.success(f"AI: {r['ai_label']}")
+                else:
+                    st.info(f"AI: {r['ai_label']}")
+                st.caption(r.get("ai_explanation",""))
             if r['highlights']:
                 st.markdown("**Highlighted suspicious sentences:**")
                 for sent in r['highlights']:
                     st.info(sent)
             else:
                 st.write("No suspicious sentences highlighted.")
+            # wordcloud (if text available)
             try:
                 wc = WordCloud(width=600, height=250, background_color="white").generate(r['raw_text'][:10000])
                 fig, ax = plt.subplots(figsize=(8,3))
@@ -299,9 +366,7 @@ if scan_button and url_input:
             except Exception:
                 pass
 
-# -----------------------------
-# File analysis
-# -----------------------------
+# Analyze uploaded CSV/JSON
 if run_file and uploaded_file:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -324,6 +389,8 @@ if run_file and uploaded_file:
             suspicion_scores = []
             engagements = []
             hashtags_all = []
+            ai_labels = []
+            ai_expls = []
 
             for idx, row in df.iterrows():
                 text = row['text']
@@ -339,8 +406,18 @@ if run_file and uploaded_file:
                 followers = float(row.get("followers", 0) or 0)
                 pe = (likes + 2*shares + 3*comments) / (1 + (followers if followers>0 else 1))
                 engagements.append(pe)
-                tags = re.findall(r"\B#\w+", normalize_text(text))
+                tags = re.findall(r"\B#\w+", text.lower())
                 hashtags_all.extend(tags)
+
+                # AI classify row if enabled & if keyword or moderate risk
+                ai_label_val, ai_expl_val = None, None
+                if use_ai:
+                    approx_risk = compute_risk(ks, s, engagement_norm=0.0, account_suspicion=0.0)
+                    if ks > 0 or approx_risk >= 0.25:
+                        ai_label_val, ai_expl_val = call_gemini_classify(text)
+                        time.sleep(0.15)
+                ai_labels.append(ai_label_val)
+                ai_expls.append(ai_expl_val)
 
             max_eng = max(engagements) if engagements else 1
             eng_norm = [e / max_eng if max_eng > 0 else 0 for e in engagements]
@@ -356,6 +433,8 @@ if run_file and uploaded_file:
             df['eng_norm'] = eng_norm
             df['suspicion'] = suspicion_scores
             df['risk'] = risk_scores
+            df['ai_label'] = ai_labels
+            df['ai_explanation'] = ai_expls
 
             st.subheader("Top flagged posts by risk")
             cols = ['platform' if 'platform' in df.columns else None,
@@ -365,7 +444,7 @@ if run_file and uploaded_file:
                     'shares' if 'shares' in df.columns else None,
                     'comments' if 'comments' in df.columns else None,
                     'followers' if 'followers' in df.columns else None,
-                    'keyword_hits','risk']
+                    'keyword_hits','risk','ai_label']
             cols = [c for c in cols if c is not None]
             topk = df.sort_values(by="risk", ascending=False).head(15)[cols]
             st.dataframe(topk.fillna(""))
@@ -402,7 +481,7 @@ if run_file and uploaded_file:
                 for _, row in df.iterrows():
                     uname = str(row.get("username","")).strip()
                     tags = row.get("keyword_hits",[]) or []
-                    tags = tags + re.findall(r"\B#\w+", normalize_text(str(row.get("text",""))))
+                    tags = tags + re.findall(r"\B#\w+", str(row.get("text","")).lower())
                     for t in tags:
                         G.add_edge(uname, t)
                 if G.number_of_nodes() > 0:
@@ -412,7 +491,7 @@ if run_file and uploaded_file:
                     nx.draw(G, pos=pos, with_labels=True, node_size=200, font_size=8)
                     st.pyplot(fig)
                 else:
-                    st.write("Not enough data for network graph.")
+                    st.write("Not enough data for network graph (need 'username' and hashtags).")
 
             csv = df.to_csv(index=False)
             b64 = base64.b64encode(csv.encode()).decode()
@@ -424,7 +503,7 @@ if run_file and uploaded_file:
 st.markdown("---")
 st.markdown("**Notes & next steps:**")
 st.markdown("""
-- This is a prototype: keyword matching + sentiment + normalization.
-- For production: replace sentiment with transformer models, add API ingestors, DB storage, and alerts.
+- This is a prototype: keyword matching + simple sentiment is used for early detection. Gemini AI classification is optional and requires a key.
+- For production: replace/augment sentiment with stronger transformer-based models, add rate-limited API ingestors, store in DB, and implement real-time alerts (webhooks/email).
 - Always analyze only public content and respect ToS & robots.txt.
 """)
