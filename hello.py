@@ -24,12 +24,17 @@ from wordcloud import WordCloud
 from textblob import TextBlob
 from datetime import datetime
 from collections import Counter
+import streamlit as st
+import google.generativeai as genai
+
 
 # -----------------------------
 # CONFIG - paste your API key here
 # -----------------------------
 # >>> REPLACE the placeholder below with your real Gemini API key <<<
-GEMINI_API_KEY = "AIzaSyAUbZZN-w1GcE_M80IDAg9vf-8poJFm43c"
+GEMINI_API_KEY = st.secrets["api_keys"]["gemini"]
+genai.configure(api_key=GEMINI_API_KEY)
+
 
 # Gemini REST endpoint used in this app (model: gemini-2.0-flash)
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
