@@ -7,13 +7,12 @@ import os, re, yaml, requests, base64, json
 import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
+from langdetect import detect
 
 # -----------------------------
-# CONFIG - paste your API key here
+# CONFIG
 # -----------------------------
-GEMINI_API_KEY = st.secrets["gemini"]
-
-# Gemini REST endpoint
+GEMINI_API_KEY = st.secrets.get("gemini", "")   # Put your Gemini API key in Streamlit secrets
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # -----------------------------
@@ -49,7 +48,7 @@ st.markdown(
 )
 
 # -----------------------------
-# Keyword DB (used in File Analysis)
+# Keyword DB
 # -----------------------------
 KEYWORD_FILE = "keywords.yaml"
 DEFAULT_KEYWORDS = [
@@ -62,23 +61,20 @@ DEFAULT_KEYWORDS = [
 ]
 
 def ensure_keyword_file():
-    """Create keywords.yaml if it doesn't exist."""
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
 
 def load_keywords():
-    """Load and migrate old keywords to new schema (lang → language)."""
     if os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
             kws = yaml.safe_load(f) or DEFAULT_KEYWORDS
     else:
         kws = DEFAULT_KEYWORDS
 
-    # --- MIGRATION step ---
     migrated = []
     for kw in kws:
-        if "lang" in kw:   # old schema
+        if "lang" in kw:
             kw["language"] = kw.pop("lang")
         if "language" not in kw:
             kw["language"] = "English"
@@ -86,13 +82,12 @@ def load_keywords():
             kw["type"] = "phrase"
         migrated.append(kw)
 
-    save_keywords(migrated)  # overwrite file with new schema
+    save_keywords(migrated)
     return migrated
 
 def save_keywords(kws):
     with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(kws, f, allow_unicode=True)
-    return True
 
 ensure_keyword_file()
 keywords = load_keywords()
@@ -115,9 +110,18 @@ def extract_content_from_url(url, timeout=10):
     except:
         return "", []
 
-# -----------------------------
-# Gemini Vision call (text + image support)
-# -----------------------------
+def detect_language(word):
+    try:
+        code = detect(word)
+        if code == "hi":
+            return "Hindi"
+        elif code == "ur":
+            return "Urdu"
+        else:
+            return "English"
+    except:
+        return "English"
+
 def call_gemini_content_check(text, image_urls=[], include_images=False):
     if not GEMINI_API_KEY:
         return ("NoKey", "Gemini API key not set.")
@@ -132,19 +136,12 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
     parts = [{"text": prompt}]
     if text.strip():
         parts.append({"text": text[:2000]})
-
-    # include images only if requested
     if include_images:
-        for img in image_urls[:3]:  # scan up to 3 images
+        for img in image_urls[:3]:
             try:
                 img_data = requests.get(img, timeout=10).content
                 b64_data = base64.b64encode(img_data).decode("utf-8")
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": b64_data
-                    }
-                })
+                parts.append({"inline_data": {"mime_type":"image/jpeg","data":b64_data}})
             except:
                 continue
 
@@ -238,10 +235,11 @@ with tabs[3]:
     # Add keyword
     new = st.text_input("New keyword") 
     if st.button("Add Keyword"):
-        if "india" in new.lower():
-            keywords.append({"term": new, "type":"phrase", "language":"English", "weight":3})
+        if new.strip():
+            lang = detect_language(new)
+            keywords.append({"term": new.strip(), "type":"phrase", "language":lang, "weight":3})
             save_keywords(keywords)
-            st.success("✅ Keyword added! Refresh to see changes")
+            st.success(f"✅ Keyword added as {lang}! Refresh to see changes")
 
     # Delete multiple keywords
     st.write("### Delete Keywords")
