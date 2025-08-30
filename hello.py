@@ -60,19 +60,40 @@ DEFAULT_KEYWORDS = [
     {"term": "destroy india", "type": "phrase", "language": "English", "weight": 5},
     {"term": "traitor india", "type": "phrase", "language": "English", "weight": 3},
 ]
+
 def ensure_keyword_file():
+    """Create keywords.yaml if it doesn't exist."""
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
+
 def load_keywords():
+    """Load and migrate old keywords to new schema (lang → language)."""
     if os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or DEFAULT_KEYWORDS
-    return DEFAULT_KEYWORDS
+            kws = yaml.safe_load(f) or DEFAULT_KEYWORDS
+    else:
+        kws = DEFAULT_KEYWORDS
+
+    # --- MIGRATION step ---
+    migrated = []
+    for kw in kws:
+        if "lang" in kw:   # old schema
+            kw["language"] = kw.pop("lang")
+        if "language" not in kw:
+            kw["language"] = "English"
+        if "type" not in kw:
+            kw["type"] = "phrase"
+        migrated.append(kw)
+
+    save_keywords(migrated)  # overwrite file with new schema
+    return migrated
+
 def save_keywords(kws):
     with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(kws, f, allow_unicode=True)
     return True
+
 ensure_keyword_file()
 keywords = load_keywords()
 
@@ -80,6 +101,7 @@ keywords = load_keywords()
 # Helpers
 # -----------------------------
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
 @st.cache_data(show_spinner=False)
 def extract_content_from_url(url, timeout=10):
     try:
@@ -111,8 +133,9 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
     if text.strip():
         parts.append({"text": text[:2000]})
 
+    # include images only if requested
     if include_images:
-        for img in image_urls[:3]:
+        for img in image_urls[:3]:  # scan up to 3 images
             try:
                 img_data = requests.get(img, timeout=10).content
                 b64_data = base64.b64encode(img_data).decode("utf-8")
@@ -209,29 +232,21 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("Manage Keywords")
 
-    # Show table
-    df_keywords = pd.DataFrame(keywords)
-    st.dataframe(df_keywords, use_container_width=True)
+    df_kw = pd.DataFrame(keywords)
+    st.dataframe(df_kw)
 
-    # --- Add new keywords ---
-    st.markdown("### ➕ Add Keywords")
-    new_keywords = st.text_area("Enter keyword(s), separated by commas or new lines")
-    if st.button("Add"):
-        for kw in [x.strip() for x in re.split("[,\n]", new_keywords) if x.strip()]:
-            keywords.append({"term": kw, "type": "phrase", "language": "English", "weight": 3})
-        save_keywords(keywords)
-        st.success("✅ Keywords added successfully! Refresh to see updates.")
-
-    # --- Delete keywords ---
-    st.markdown("### ❌ Delete Keywords")
-    if keywords:
-        to_delete = st.multiselect(
-            "Select keyword(s) to delete",
-            options=[k["term"] for k in keywords]
-        )
-        if st.button("Delete Selected"):
-            keywords = [k for k in keywords if k["term"] not in to_delete]
+    # Add keyword
+    new = st.text_input("New keyword") 
+    if st.button("Add Keyword"):
+        if "india" in new.lower():
+            keywords.append({"term": new, "type":"phrase", "language":"English", "weight":3})
             save_keywords(keywords)
-            st.error(f"🗑️ Deleted {len(to_delete)} keyword(s). Refresh to see updates.")
-    else:
-        st.info("No keywords found. Add some above.")
+            st.success("✅ Keyword added! Refresh to see changes")
+
+    # Delete multiple keywords
+    st.write("### Delete Keywords")
+    to_delete = st.multiselect("Select keywords to delete", [kw["term"] for kw in keywords])
+    if st.button("Delete Selected"):
+        keywords = [kw for kw in keywords if kw["term"] not in to_delete]
+        save_keywords(keywords)
+        st.success("🗑️ Selected keywords deleted! Refresh to see changes")
