@@ -12,3 +12,5 @@ pandas
 numpy
 praw
 plotly
+langdetect
+detect
