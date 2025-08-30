@@ -43,7 +43,6 @@ st.markdown(
         background:linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
         color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
     }
-    .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
     </style>
     """, unsafe_allow_html=True
 )
@@ -111,7 +110,6 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
     if text.strip():
         parts.append({"text": text[:2000]})
 
-    # include images only if requested
     if include_images:
         for img in image_urls[:3]:  # scan up to 3 images
             try:
@@ -144,6 +142,45 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
         return ("Error", str(e))
 
 # -----------------------------
+# RESULT CARD COMPONENT
+# -----------------------------
+def show_result_card(url, label, explanation, images=None, include_images=False):
+    if label.lower() in ["anti-india", "propaganda", "detected"]:
+        color = "#ff4d4f"
+        icon = "🚨"
+        title = "Anti-India Propaganda Detected"
+    elif label.lower() in ["safe", "clean", "benign"]:
+        color = "#16c60c"
+        icon = "✅"
+        title = "Content Safe"
+    else:
+        color = "#f0ad4e"
+        icon = "🤔"
+        title = "Uncertain"
+
+    st.markdown(
+        f"""
+        <div style="
+            border-radius: 14px;
+            padding: 18px;
+            margin: 15px 0;
+            background-color: {color}15;
+            border: 2px solid {color};
+        ">
+            <h4 style="margin:0; color:{color};">{icon} {title}</h4>
+            <p style="margin:4px 0 0 0; font-size:13px; color:#aaa;"><b>Source:</b> {url}</p>
+            <p style="margin-top:12px; font-size:15px; color:#e6eef6; line-height:1.5;">
+                {explanation}
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    if include_images and images:
+        st.info(f"📷 {len(images)} image(s) were analyzed for propaganda content.")
+
+# -----------------------------
 # HEADER
 # -----------------------------
 st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection Dashboard</h1>", unsafe_allow_html=True)
@@ -155,7 +192,7 @@ st.write("---")
 tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
 
 # -----------------------------
-# TAB: Dashboard (NO GRAPH)
+# TAB: Dashboard
 # -----------------------------
 with tabs[0]:
     col1,col2,col3,col4=st.columns(4)
@@ -165,7 +202,7 @@ with tabs[0]:
     col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
 
 # -----------------------------
-# TAB: URL Scanner (AI with optional image scanning)
+# TAB: URL Scanner
 # -----------------------------
 with tabs[1]:
     st.subheader("Scan URLs with AI (Text + Optional Images)")
@@ -176,16 +213,7 @@ with tabs[1]:
         for u in [x.strip() for x in url_input.split(",") if x.strip()]:
             text, images = extract_content_from_url(u)
             ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
-
-            st.markdown("---")
-            st.markdown(f"**{u}**")
-            if "Anti" in ai_label or "Detected" in ai_label:
-                st.error(f"🚨 {ai_label}\n\n{ai_expl}")
-            else:
-                st.success(f"✅ {ai_label}\n\n{ai_expl}")
-
-            if include_images and images:
-                st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
+            show_result_card(u, ai_label, ai_expl, images, include_images)
 
 # -----------------------------
 # TAB: File Analysis
@@ -209,7 +237,23 @@ with tabs[2]:
 # -----------------------------
 with tabs[3]:
     st.subheader("Manage Keywords")
-    st.dataframe(pd.DataFrame(keywords))
-    new=st.text_input("New keyword"); 
-    if st.button("Add") and "india" in new.lower():
-        keywords.append({"term":new,"type":"phrase","lang":"en","weight":3}); save_keywords(keywords); st.success("Added")
+
+    df_kw = pd.DataFrame(keywords)
+    st.dataframe(df_kw)
+
+    st.write("### ➕ Add Keyword")
+    new_kw = st.text_input("Keyword / Phrase (English, Hindi, Urdu, Arabic supported)")
+    lang_choice = st.selectbox("Language", ["en", "hi", "ur", "ar"])
+    if st.button("Add Keyword"):
+        if new_kw.strip():
+            keywords.append({"term": new_kw.strip(), "type": "phrase", "lang": lang_choice, "weight": 3})
+            save_keywords(keywords)
+            st.success(f"✅ Added keyword: {new_kw} ({lang_choice})")
+
+    st.write("### ❌ Delete Keyword")
+    if keywords:
+        to_delete = st.selectbox("Select keyword to delete", [k["term"] for k in keywords])
+        if st.button("Delete Keyword"):
+            keywords = [k for k in keywords if k["term"] != to_delete]
+            save_keywords(keywords)
+            st.warning(f"🗑️ Deleted keyword: {to_delete}")
