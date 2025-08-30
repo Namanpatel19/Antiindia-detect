@@ -1,230 +1,226 @@
+# app.py
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 from textblob import TextBlob
 import google.generativeai as genai
 import praw
-import re
-from collections import Counter
-import io
+from datetime import datetime
 
-# =============================
-# Load API Keys from st.secrets
-# =============================
-GEMINI_API_KEY = st.secrets["api_keys"]["gemini"]
-REDDIT_CLIENT_ID = st.secrets["reddit"]["client_id"]
-REDDIT_CLIENT_SECRET = st.secrets["reddit"]["client_secret"]
-REDDIT_USER_AGENT = st.secrets["reddit"]["user_agent"]
-
-# Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Configure Reddit API
-reddit = praw.Reddit(
-    client_id=REDDIT_CLIENT_ID,
-    client_secret=REDDIT_CLIENT_SECRET,
-    user_agent=REDDIT_USER_AGENT
+# -----------------------------
+# Streamlit page config
+# -----------------------------
+st.set_page_config(
+    page_title="Anti-India Content Detector",
+    layout="wide"
 )
 
-# =============================
-# Keyword Bank
-# =============================
+# -----------------------------
+# CONFIG: Gemini API + Reddit
+# -----------------------------
+GEMINI_API_KEY = st.secrets["gemini"]  # keep your API key in secrets
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Reddit API credentials from secrets
+reddit = praw.Reddit(
+    client_id=st.secrets["reddit"]["client_id"],
+    client_secret=st.secrets["reddit"]["client_secret"],
+    user_agent=st.secrets["reddit"]["user_agent"],
+)
+
+# -----------------------------
+# Hardcoded Keyword List
+# -----------------------------
 ANTI_INDIA_KEYWORDS = [
-    "anti-india", "down with india", "boycott india", "hate india",
-    "india terrorist", "destroy india", "free kashmir", "india go back"
+    "boycott india", "down with india", "anti-india", "khalistan",
+    "terrorist", "attack", "hate india", "break india", "india is evil",
+    "pakistan zindabad", "separate kashmir", "destroy india",
+    "burn indian flag", "kill indians", "modi murderer", "rss terrorist",
+    "islamophobia india", "down with modi", "ban india", "anti-hindu"
 ]
 
-# =============================
+# -----------------------------
 # Utility Functions
-# =============================
-def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+# -----------------------------
+def keyword_hits(text, keywords):
+    hits = {}
+    for kw in keywords:
+        c = text.lower().count(kw.lower())
+        if c > 0:
+            hits[kw] = c
+    return hits, list(hits.keys())
 
-def analyze_keywords(text):
-    hits = [kw for kw in ANTI_INDIA_KEYWORDS if kw.lower() in text.lower()]
-    return hits
+def sentiment_score(text):
+    return TextBlob(text).sentiment.polarity
 
-def analyze_sentiment(text):
-    blob = TextBlob(text)
-    return blob.sentiment.polarity
+def compute_risk(keywords_found, sentiment):
+    risk = 0
+    if len(keywords_found) > 0:
+        risk += len(keywords_found) * 2
+    if sentiment < -0.3:
+        risk += 3
+    elif sentiment < 0:
+        risk += 1
+    return min(risk, 10)
 
-def ai_context_check(text):
+def badge_html(risk):
+    color = "green"
+    label = "Safe"
+    if risk >= 7:
+        color = "red"; label = "High Risk"
+    elif risk >= 4:
+        color = "orange"; label = "Moderate"
+    return f"<span style='background:{color};color:white;padding:3px 6px;border-radius:6px'>{label} ({risk})</span>"
+
+def highlight_sentences(text, keywords_found):
+    sentences = text.split(".")
+    highlights = []
+    for s in sentences:
+        for kw in keywords_found:
+            if kw.lower() in s.lower():
+                highlights.append(s.strip())
+    return highlights
+
+def call_gemini_classify(text):
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(f"Classify if this text is anti-India: {text}")
-        return response.text
+        prompt = f"Classify this text as Anti-India, Neutral, or Safe. Text: {text[:1000]}"
+        resp = model.generate_content(prompt)
+        return resp.text, "AI classification successful"
     except Exception as e:
-        return f"AI check failed: {e}"
+        return None, str(e)
 
-def generate_wordcloud(text):
-    wc = WordCloud(width=800, height=400, background_color="white").generate(text)
-    buf = io.BytesIO()
-    plt.imshow(wc, interpolation='bilinear')
-    plt.axis("off")
-    plt.savefig(buf, format="png")
-    st.image(buf)
+# -----------------------------
+# UI Tabs
+# -----------------------------
+tabs = st.tabs([
+    "Dashboard", 
+    "URL Scanner", 
+    "File Analysis", 
+    "Keyword DB", 
+    "Utilities",
+    "Social Media Scanner"
+])
 
-# =============================
-# Scanners
-# =============================
-def scan_text_input(text):
-    text = clean_text(text)
-    hits = analyze_keywords(text)
-    sentiment = analyze_sentiment(text)
-    ai_result = ai_context_check(text)
-    return text, hits, sentiment, ai_result
+# -----------------------------
+# TAB 0: Dashboard
+# -----------------------------
+with tabs[0]:
+    st.title("🇮🇳 Anti-India Content Detector")
+    st.write("Detects & analyzes Anti-India content in text, files, websites, and social media (Reddit).")
 
-def scan_url(url):
-    try:
-        res = requests.get(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        text = clean_text(soup.get_text())
-        return scan_text_input(text)
-    except Exception as e:
-        return "", [], 0, f"Error fetching URL: {e}"
+# -----------------------------
+# TAB 1: URL Scanner
+# -----------------------------
+with tabs[1]:
+    st.subheader("🔗 URL Scanner")
+    url = st.text_input("Enter website URL")
+    if st.button("Scan URL"):
+        if url:
+            try:
+                r = requests.get(url, timeout=10)
+                soup = BeautifulSoup(r.text, "html.parser")
+                txt = soup.get_text(separator=" ")
+                hits, ks = keyword_hits(txt, ANTI_INDIA_KEYWORDS)
+                sent = sentiment_score(txt)
+                risk = compute_risk(ks, sent)
+                st.markdown(badge_html(risk), unsafe_allow_html=True)
+                st.write("Keyword Hits:", hits)
+                st.write("Sentiment:", sent)
+                ai_label, ai_expl = call_gemini_classify(txt)
+                st.info(f"AI: {ai_label}")
+                st.caption(ai_expl)
+            except Exception as e:
+                st.error(f"Error scanning URL: {e}")
 
-def scan_file(uploaded_file):
-    try:
-        text = uploaded_file.read().decode("utf-8")
-        return scan_text_input(text)
-    except Exception as e:
-        return "", [], 0, f"Error reading file: {e}"
+# -----------------------------
+# TAB 2: File Analysis
+# -----------------------------
+with tabs[2]:
+    st.subheader("📂 File Analysis")
+    file = st.file_uploader("Upload a text file", type=["txt"])
+    if file:
+        txt = file.read().decode("utf-8")
+        hits, ks = keyword_hits(txt, ANTI_INDIA_KEYWORDS)
+        sent = sentiment_score(txt)
+        risk = compute_risk(ks, sent)
+        st.markdown(badge_html(risk), unsafe_allow_html=True)
+        st.write("Keyword Hits:", hits)
+        st.write("Sentiment:", sent)
+        ai_label, ai_expl = call_gemini_classify(txt)
+        st.info(f"AI: {ai_label}")
+        st.caption(ai_expl)
+        highlights = highlight_sentences(txt, ks)
+        if highlights:
+            st.warning("Suspicious sentences found:")
+            for s in highlights:
+                st.write(s)
 
-def scan_reddit(subreddit_name, limit=5):
-    posts_data = []
-    try:
-        subreddit = reddit.subreddit(subreddit_name)
-        for post in subreddit.hot(limit=limit):
-            text, hits, sentiment, ai_result = scan_text_input(post.title + " " + (post.selftext or ""))
-            posts_data.append({
-                "title": post.title,
-                "hits": hits,
-                "sentiment": sentiment,
-                "ai_result": ai_result
-            })
-    except Exception as e:
-        st.error(f"Reddit scan failed: {e}")
-    return posts_data
+# -----------------------------
+# TAB 3: Keyword DB
+# -----------------------------
+with tabs[3]:
+    st.subheader("📖 Keyword Database")
+    st.write("Loaded Anti-India keywords (hardcoded in app).")
+    st.write(ANTI_INDIA_KEYWORDS)
 
-# =============================
-# Risk Meter
-# =============================
-def risk_score(hits, sentiment):
-    score = len(hits) * 30
-    if sentiment < -0.3:
-        score += 20
-    return min(score, 100)
+# -----------------------------
+# TAB 4: Utilities
+# -----------------------------
+with tabs[4]:
+    st.subheader("🛠 Utilities")
+    st.write("Future tools will be added here.")
 
-def show_risk_meter(score):
-    st.metric(label="⚠️ Risk Level", value=f"{score}%")
-    if score > 70:
-        st.error("🚨 High Risk: Anti-India content detected")
-    elif score > 40:
-        st.warning("⚠️ Medium Risk: Possible harmful content")
-    else:
-        st.success("✅ Low Risk")
+# -----------------------------
+# TAB 5: Social Media Scanner (Reddit)
+# -----------------------------
+with tabs[5]:
+    st.subheader("🌐 Social Media Scanner (Reddit)")
 
-# =============================
-# Streamlit UI
-# =============================
-st.set_page_config(page_title="Anti-India Content Detector", layout="wide")
+    subreddit_name = st.text_input("Enter subreddit (e.g. india, worldnews)")
+    limit_posts = st.slider("Number of posts", 5, 50, 10)
 
-st.sidebar.title("🛡️ Content Scanner")
-menu = st.sidebar.radio("Choose an option", [
-    "Home", "Text Scan", "URL Scan", "File Upload", "Reddit Scan", "Image Scan (Future)", "Video Scan (Future)"])
+    if st.button("Scan Subreddit"):
+        if not subreddit_name:
+            st.warning("Enter a subreddit name.")
+        else:
+            try:
+                posts = reddit.subreddit(subreddit_name).hot(limit=limit_posts)
+                results = []
+                for post in posts:
+                    txt = f"{post.title}\n\n{post.selftext}"
+                    hits, ks = keyword_hits(txt, ANTI_INDIA_KEYWORDS)
+                    sent = sentiment_score(txt)
+                    risk = compute_risk(ks, sent)
+                    ai_label, ai_expl = call_gemini_classify(txt)
+                    results.append({
+                        "title": post.title,
+                        "url": f"https://reddit.com{post.permalink}",
+                        "hits": hits,
+                        "risk": risk,
+                        "sentiment": sent,
+                        "ai_label": ai_label,
+                        "ai_expl": ai_expl,
+                    })
 
-st.title("🇮🇳 AI-Powered Anti-India Content Detector")
-st.markdown("---")
-
-# =============================
-# HOME
-# =============================
-if menu == "Home":
-    st.subheader("Welcome to the AI Anti-India Content Detection System")
-    st.write("This tool detects and flags harmful anti-India content using:")
-    st.markdown("""
-    - Keyword scanning
-    - Sentiment analysis
-    - AI Context Detection (Gemini)
-    - Wordcloud visualization
-    - Reddit & URL integration
-    - Future: Image & Video Meme scanning
-    """)
-
-# =============================
-# TEXT SCAN
-# =============================
-elif menu == "Text Scan":
-    st.subheader("📝 Enter Text")
-    text = st.text_area("Paste any text to analyze:")
-    if st.button("Analyze Text") and text:
-        full_text, hits, sentiment, ai_result = scan_text_input(text)
-        st.write("**Keyword Hits:**", hits)
-        st.write("**Sentiment:**", sentiment)
-        st.write("**AI Result:**", ai_result)
-        score = risk_score(hits, sentiment)
-        show_risk_meter(score)
-        generate_wordcloud(full_text)
-
-# =============================
-# URL SCAN
-# =============================
-elif menu == "URL Scan":
-    st.subheader("🔗 Enter Website URL")
-    url = st.text_input("Paste a website link:")
-    if st.button("Scan URL") and url:
-        full_text, hits, sentiment, ai_result = scan_url(url)
-        st.write("**Keyword Hits:**", hits)
-        st.write("**Sentiment:**", sentiment)
-        st.write("**AI Result:**", ai_result)
-        score = risk_score(hits, sentiment)
-        show_risk_meter(score)
-        if full_text:
-            generate_wordcloud(full_text)
-
-# =============================
-# FILE UPLOAD
-# =============================
-elif menu == "File Upload":
-    st.subheader("📂 Upload a Text File")
-    uploaded_file = st.file_uploader("Choose a file", type=["txt"])
-    if uploaded_file:
-        full_text, hits, sentiment, ai_result = scan_file(uploaded_file)
-        st.write("**Keyword Hits:**", hits)
-        st.write("**Sentiment:**", sentiment)
-        st.write("**AI Result:**", ai_result)
-        score = risk_score(hits, sentiment)
-        show_risk_meter(score)
-        if full_text:
-            generate_wordcloud(full_text)
-
-# =============================
-# REDDIT SCAN
-# =============================
-elif menu == "Reddit Scan":
-    st.subheader("📡 Scan Reddit Subreddit")
-    subreddit_name = st.text_input("Enter subreddit (e.g., worldnews)")
-    limit = st.slider("Number of posts", 1, 20, 5)
-    if st.button("Scan Subreddit") and subreddit_name:
-        results = scan_reddit(subreddit_name, limit)
-        for r in results:
-            st.markdown(f"**Post:** {r['title']}")
-            st.write("Keyword Hits:", r["hits"])
-            st.write("Sentiment:", r["sentiment"])
-            st.write("AI Result:", r["ai_result"])
-            st.markdown("---")
-
-# =============================
-# FUTURE PLACEHOLDERS
-# =============================
-elif menu == "Image Scan (Future)":
-    st.subheader("🖼️ Image/Meme Scanning (Coming Soon)")
-    st.info("This will allow AI to detect Anti-India content hidden in memes & images.")
-
-elif menu == "Video Scan (Future)":
-    st.subheader("🎥 Video/Meme Scanning (Coming Soon)")
-    st.info("This will extend detection to videos and viral content analysis.")
+                st.markdown("### Results")
+                for r in results:
+                    st.markdown("---")
+                    st.markdown(f"**[{r['title']}]({r['url']})**")
+                    st.markdown(badge_html(r["risk"]), unsafe_allow_html=True)
+                    st.write("Keyword Hits:", r["hits"] or "None")
+                    st.write("Sentiment:", r["sentiment"])
+                    if r["ai_label"]:
+                        if r["ai_label"].startswith("Anti-India"):
+                            st.error(f"AI: {r['ai_label']}")
+                        elif r["ai_label"].startswith("Safe"):
+                            st.success(f"AI: {r['ai_label']}")
+                        else:
+                            st.info(f"AI: {r['ai_label']}")
+                        st.caption(r["ai_expl"])
+            except Exception as e:
+                st.error(f"Reddit API error: {e}")
