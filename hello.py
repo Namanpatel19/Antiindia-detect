@@ -3,17 +3,10 @@
 Anti-India Campaign Detection — Cybersecurity Dashboard Style
 """
 
-import os, re, time, json, yaml, requests
+import os, re, yaml, requests, base64, json
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
-import networkx as nx
 from bs4 import BeautifulSoup
-from wordcloud import WordCloud
-from textblob import TextBlob
-from datetime import datetime
-from collections import Counter
-import plotly.express as px
 
 # -----------------------------
 # CONFIG - paste your API key here
@@ -51,15 +44,12 @@ st.markdown(
         color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
     }
     .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
-    .low { background:#E8FFF1; color:#0B7B37; }
-    .med { background:#FFF8E6; color:#8A6100; }
-    .high{ background:#FFE8E8; color:#8E0000; }
     </style>
     """, unsafe_allow_html=True
 )
 
 # -----------------------------
-# Keyword DB
+# Keyword DB (used in File Analysis)
 # -----------------------------
 KEYWORD_FILE = "keywords.yaml"
 DEFAULT_KEYWORDS = [
@@ -91,47 +81,67 @@ keywords = load_keywords()
 # -----------------------------
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 @st.cache_data(show_spinner=False)
-def extract_text_from_url(url, timeout=10):
+def extract_content_from_url(url, timeout=10):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout); r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
-        return " ".join([p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3","li"])])
-    except: return ""
-def keyword_hits(text, kw_list):
-    hits, strength = [], 0; text_l = text.lower()
-    for k in kw_list:
-        term = str(k.get("term","")).lower().strip(); weight=int(k.get("weight",1))
-        if not term: continue
-        if term.startswith("#"):
-            if term in re.findall(r"\B#\w+", text_l): hits.append(term); strength += weight
-        else:
-            if re.search(rf"\b{re.escape(term)}\b", text_l): hits.append(term); strength += weight
-    return sorted(set(hits)), strength
-def sentiment_score(text): return TextBlob(text).sentiment.polarity
-def compute_risk(keyword_strength, sentiment): 
-    return min(1.0, 0.45*min(1,keyword_strength/8.0) + 0.2*0 + 0.2*max(0,-sentiment))
-def highlight_sentences(text, hits):
-    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if any(h in s.lower() for h in hits)]
-def badge_html(risk):
-    if risk < 0.2: return f'<span class="badge low">Low · {risk*100:.1f}%</span>'
-    if risk < 0.6: return f'<span class="badge med">Medium · {risk*100:.1f}%</span>'
-    return f'<span class="badge high">High · {risk*100:.1f}%</span>'
+        text = " ".join([p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3","li"])])
+        images = [img["src"] for img in soup.find_all("img") if img.get("src")]
+        from urllib.parse import urljoin
+        images = [urljoin(url, i) for i in images]
+        return text, images
+    except:
+        return "", []
 
 # -----------------------------
-# Gemini AI call
+# Gemini Vision call (text + image support)
 # -----------------------------
-def call_gemini_classify(text):
-    if not GEMINI_API_KEY: return ("NoKey","Gemini API key not set.")
-    payload = {
-        "contents": [{"parts": [{"text": f"Classify this text: {text[:4000]}"}]}]
-    }
+def call_gemini_content_check(text, image_urls=[], include_images=False):
+    if not GEMINI_API_KEY:
+        return ("NoKey", "Gemini API key not set.")
+
+    prompt = """
+    Detect if this content (text and/or images) contains Anti-India propaganda, 
+    hate speech, or coordinated campaigns.
+    Language may be English, Hindi, Urdu, or Arabic.
+    Reply strictly in JSON with fields: "label" and "explanation".
+    """
+
+    parts = [{"text": prompt}]
+    if text.strip():
+        parts.append({"text": text[:2000]})
+
+    # include images only if requested
+    if include_images:
+        for img in image_urls[:3]:  # scan up to 3 images
+            try:
+                img_data = requests.get(img, timeout=10).content
+                b64_data = base64.b64encode(img_data).decode("utf-8")
+                parts.append({
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": b64_data
+                    }
+                })
+            except:
+                continue
+
+    payload = {"contents":[{"parts": parts}]}
     headers = {"Content-Type":"application/json","X-goog-api-key":GEMINI_API_KEY}
+
     try:
-        r = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=15)
-        if r.status_code!=200: return ("Error", r.text[:200])
-        j=r.json(); ai_text=j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
-        return ("Anti-India Detected","Suspicious content") if "india" in ai_text.lower() else ("Safe", ai_text)
-    except Exception as e: return ("Error", str(e))
+        r = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=40)
+        if r.status_code != 200:
+            return ("Error", r.text[:200])
+        j = r.json()
+        ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
+        try:
+            data = json.loads(ai_text)
+            return (data.get("label","Unknown"), data.get("explanation",""))
+        except:
+            return ("Result", ai_text)
+    except Exception as e:
+        return ("Error", str(e))
 
 # -----------------------------
 # HEADER
@@ -142,10 +152,10 @@ st.write("---")
 # -----------------------------
 # TABS
 # -----------------------------
-tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB","⚙ Utilities"])
+tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
 
 # -----------------------------
-# TAB: Dashboard
+# TAB: Dashboard (NO GRAPH)
 # -----------------------------
 with tabs[0]:
     col1,col2,col3,col4=st.columns(4)
@@ -154,30 +164,28 @@ with tabs[0]:
     col3.markdown(f"<div class='metric-card'><h3>08</h3><p>Risky Activities</p></div>",unsafe_allow_html=True)
     col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
 
-    st.markdown("### 📈 Activity Over Time")
-    df=pd.DataFrame({"Month":["Jan","Feb","Mar","Apr","May","Jun","Jul"],"Events":[200,300,400,600,500,700,900]})
-    fig=px.line(df,x="Month",y="Events",markers=True)
-    st.plotly_chart(fig,use_container_width=True)
-
 # -----------------------------
-# TAB: URL Scanner
+# TAB: URL Scanner (AI with optional image scanning)
 # -----------------------------
 with tabs[1]:
-    st.subheader("Scan URLs")
-    url_input=st.text_input("Enter URL(s), comma-separated")
+    st.subheader("Scan URLs with AI (Text + Optional Images)")
+    url_input = st.text_input("Enter URL(s), comma-separated")
+    include_images = st.checkbox("🔎 Include images in scan", value=False)
+
     if st.button("Scan"):
         for u in [x.strip() for x in url_input.split(",") if x.strip()]:
-            txt=extract_text_from_url(u)
-            hits,ks=keyword_hits(txt,keywords); sent=sentiment_score(txt); risk=compute_risk(ks,sent)
-            ai_label,ai_expl=call_gemini_classify(txt)
+            text, images = extract_content_from_url(u)
+            ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
+
             st.markdown("---")
-            st.markdown(f"**{u}** {badge_html(risk)}",unsafe_allow_html=True)
-            st.write("Hits:",hits); st.write("Sentiment:",sent)
-            if ai_label.startswith("Anti"): st.error(ai_label)
-            else: st.success(ai_label)
-            if txt:
-                wc=WordCloud(width=600,height=250,background_color="black").generate(txt)
-                fig,ax=plt.subplots(figsize=(6,3)); ax.imshow(wc); ax.axis("off"); st.pyplot(fig)
+            st.markdown(f"**{u}**")
+            if "Anti" in ai_label or "Detected" in ai_label:
+                st.error(f"🚨 {ai_label}\n\n{ai_expl}")
+            else:
+                st.success(f"✅ {ai_label}\n\n{ai_expl}")
+
+            if include_images and images:
+                st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
 
 # -----------------------------
 # TAB: File Analysis
@@ -192,8 +200,8 @@ with tabs[2]:
         else: texts=[f.read().decode()]
         recs=[]
         for t in texts:
-            hits,ks=keyword_hits(t,keywords); s=sentiment_score(t); risk=compute_risk(ks,s); lbl,expl=call_gemini_classify(t)
-            recs.append({"text":t[:80],"hits":hits,"risk":risk,"ai":lbl})
+            lbl,expl=call_gemini_content_check(t, [], False)
+            recs.append({"text":t[:80],"ai":lbl,"explanation":expl})
         st.dataframe(pd.DataFrame(recs))
 
 # -----------------------------
@@ -205,14 +213,3 @@ with tabs[3]:
     new=st.text_input("New keyword"); 
     if st.button("Add") and "india" in new.lower():
         keywords.append({"term":new,"type":"phrase","lang":"en","weight":3}); save_keywords(keywords); st.success("Added")
-
-# -----------------------------
-# TAB: Utilities
-# -----------------------------
-with tabs[4]:
-    txt=st.text_area("Enter text")
-    if st.button("Sentiment"): st.write("Score:", sentiment_score(txt))
-    if st.button("Wordcloud"): 
-        wc=WordCloud(width=600,height=250,background_color="black").generate(txt or " ".join([k["term"] for k in keywords]))
-        fig,ax=plt.subplots(); ax.imshow(wc); ax.axis("off"); st.pyplot(fig)
-    if st.button("Test AI"): st.write(call_gemini_classify(txt))
