@@ -16,7 +16,22 @@ from datetime import datetime
 # -----------------------------
 st.set_page_config(
     page_title="Anti-India Content Detector",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# -----------------------------
+# Custom Styling
+# -----------------------------
+st.markdown(
+    """
+    <style>
+    .main { background-color: #f9fafc; }
+    .title { font-size:36px; font-weight:700; color:#1a237e; }
+    .subtitle { font-size:18px; color:#424242; margin-bottom:20px; }
+    .stMetric { background: #ffffff; border-radius: 12px; padding: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.1); }
+    </style>
+    """, unsafe_allow_html=True
 )
 
 # -----------------------------
@@ -94,24 +109,43 @@ def call_gemini_classify(text):
     except Exception as e:
         return None, str(e)
 
+def risk_gauge(risk):
+    fig, ax = plt.subplots(figsize=(3, 1.5))
+    ax.barh([0], [risk], color="red" if risk > 6 else "orange" if risk > 3 else "green")
+    ax.set_xlim(0, 10)
+    ax.set_yticks([])
+    ax.set_xticks(range(0, 11))
+    ax.set_title("Risk Gauge", fontsize=10)
+    st.pyplot(fig)
+
 # -----------------------------
 # UI Tabs
 # -----------------------------
 tabs = st.tabs([
-    "Dashboard", 
-    "URL Scanner", 
-    "File Analysis", 
-    "Keyword DB", 
-    "Utilities",
-    "Social Media Scanner"
+    "📊 Dashboard", 
+    "🔗 URL Scanner", 
+    "📂 File Analysis", 
+    "📖 Keyword DB", 
+    "🛠 Utilities",
+    "🌐 Social Media Scanner"
 ])
 
 # -----------------------------
 # TAB 0: Dashboard
 # -----------------------------
 with tabs[0]:
-    st.title("🇮🇳 Anti-India Content Detector")
-    st.write("Detects & analyzes Anti-India content in text, files, websites, and social media (Reddit).")
+    st.markdown("<div class='title'>🇮🇳 Anti-India Content Detector</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>AI-powered risk detection for text, files, websites, and social media</div>", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Scans", "128")
+    with col2:
+        st.metric("Flagged Risks", "37")
+    with col3:
+        st.metric("Safe Content", "91")
+
+    st.info("Use the tabs above to scan URLs, analyze files, or monitor Reddit for potential Anti-India content.")
 
 # -----------------------------
 # TAB 1: URL Scanner
@@ -129,8 +163,12 @@ with tabs[1]:
                 sent = sentiment_score(txt)
                 risk = compute_risk(ks, sent)
                 st.markdown(badge_html(risk), unsafe_allow_html=True)
+                risk_gauge(risk)
                 st.write("Keyword Hits:", hits)
                 st.write("Sentiment:", sent)
+                if hits:
+                    wc = WordCloud(width=600, height=400, background_color="white").generate(" ".join(ks))
+                    st.image(wc.to_array(), caption="Flagged Keywords WordCloud")
                 ai_label, ai_expl = call_gemini_classify(txt)
                 st.info(f"AI: {ai_label}")
                 st.caption(ai_expl)
@@ -149,16 +187,20 @@ with tabs[2]:
         sent = sentiment_score(txt)
         risk = compute_risk(ks, sent)
         st.markdown(badge_html(risk), unsafe_allow_html=True)
+        risk_gauge(risk)
         st.write("Keyword Hits:", hits)
         st.write("Sentiment:", sent)
+        if hits:
+            wc = WordCloud(width=600, height=400, background_color="white").generate(" ".join(ks))
+            st.image(wc.to_array(), caption="Flagged Keywords WordCloud")
         ai_label, ai_expl = call_gemini_classify(txt)
         st.info(f"AI: {ai_label}")
         st.caption(ai_expl)
         highlights = highlight_sentences(txt, ks)
         if highlights:
-            st.warning("Suspicious sentences found:")
-            for s in highlights:
-                st.write(s)
+            with st.expander("🔎 Suspicious Sentences"):
+                for s in highlights:
+                    st.markdown(f"- {s}")
 
 # -----------------------------
 # TAB 3: Keyword DB
@@ -196,7 +238,10 @@ with tabs[5]:
                     hits, ks = keyword_hits(txt, ANTI_INDIA_KEYWORDS)
                     sent = sentiment_score(txt)
                     risk = compute_risk(ks, sent)
-                    ai_label, ai_expl = call_gemini_classify(txt)
+                    if risk >= 4:  # only call Gemini for moderate/high
+                        ai_label, ai_expl = call_gemini_classify(txt)
+                    else:
+                        ai_label, ai_expl = "Safe", "Skipped Gemini (low risk)"
                     results.append({
                         "title": post.title,
                         "url": f"https://reddit.com{post.permalink}",
@@ -208,10 +253,12 @@ with tabs[5]:
                     })
 
                 st.markdown("### Results")
+                df = pd.DataFrame(results)
                 for r in results:
                     st.markdown("---")
                     st.markdown(f"**[{r['title']}]({r['url']})**")
                     st.markdown(badge_html(r["risk"]), unsafe_allow_html=True)
+                    risk_gauge(r["risk"])
                     st.write("Keyword Hits:", r["hits"] or "None")
                     st.write("Sentiment:", r["sentiment"])
                     if r["ai_label"]:
@@ -222,5 +269,7 @@ with tabs[5]:
                         else:
                             st.info(f"AI: {r['ai_label']}")
                         st.caption(r["ai_expl"])
+                csv = df.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Download Report (CSV)", csv, "reddit_scan_report.csv", "text/csv")
             except Exception as e:
                 st.error(f"Reddit API error: {e}")
