@@ -43,6 +43,7 @@ st.markdown(
         background:linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
         color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
     }
+    .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
     </style>
     """, unsafe_allow_html=True
 )
@@ -52,30 +53,26 @@ st.markdown(
 # -----------------------------
 KEYWORD_FILE = "keywords.yaml"
 DEFAULT_KEYWORDS = [
-    {"term": "boycott india", "type": "phrase", "lang": "en", "weight": 4},
-    {"term": "#freekashmir", "type": "hashtag", "lang": "en", "weight": 5},
-    {"term": "down with india", "type": "phrase", "lang": "en", "weight": 4},
-    {"term": "anti-india", "type": "keyword", "lang": "en", "weight": 3},
-    {"term": "destroy india", "type": "phrase", "lang": "en", "weight": 5},
-    {"term": "traitor india", "type": "phrase", "lang": "en", "weight": 3},
+    {"term": "boycott india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "#freekashmir", "type": "hashtag", "language": "English", "weight": 5},
+    {"term": "down with india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "anti-india", "type": "keyword", "language": "English", "weight": 3},
+    {"term": "destroy india", "type": "phrase", "language": "English", "weight": 5},
+    {"term": "traitor india", "type": "phrase", "language": "English", "weight": 3},
 ]
-
 def ensure_keyword_file():
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
-
 def load_keywords():
     if os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or DEFAULT_KEYWORDS
     return DEFAULT_KEYWORDS
-
 def save_keywords(kws):
     with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(kws, f, allow_unicode=True)
     return True
-
 ensure_keyword_file()
 keywords = load_keywords()
 
@@ -83,7 +80,6 @@ keywords = load_keywords()
 # Helpers
 # -----------------------------
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-
 @st.cache_data(show_spinner=False)
 def extract_content_from_url(url, timeout=10):
     try:
@@ -138,11 +134,6 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
             return ("Error", r.text[:200])
         j = r.json()
         ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
-
-        # ---- CLEAN FIX ----
-        if "```" in ai_text:
-            ai_text = ai_text.replace("```json", "").replace("```", "").strip()
-
         try:
             data = json.loads(ai_text)
             return (data.get("label","Unknown"), data.get("explanation",""))
@@ -154,7 +145,7 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
 # -----------------------------
 # HEADER
 # -----------------------------
-st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection By Hacksheild</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection Dashboard</h1>", unsafe_allow_html=True)
 st.write("---")
 
 # -----------------------------
@@ -163,7 +154,7 @@ st.write("---")
 tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
 
 # -----------------------------
-# TAB: Dashboard (NO GRAPH)
+# TAB: Dashboard
 # -----------------------------
 with tabs[0]:
     col1,col2,col3,col4=st.columns(4)
@@ -173,7 +164,7 @@ with tabs[0]:
     col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
 
 # -----------------------------
-# TAB: URL Scanner (AI with optional image scanning)
+# TAB: URL Scanner
 # -----------------------------
 with tabs[1]:
     st.subheader("Scan URLs with AI (Text + Optional Images)")
@@ -186,14 +177,11 @@ with tabs[1]:
             ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
 
             st.markdown("---")
-            st.markdown(f"**Source:** {u}")
-
+            st.markdown(f"**{u}**")
             if "Anti" in ai_label or "Detected" in ai_label:
                 st.error(f"🚨 {ai_label}\n\n{ai_expl}")
-            elif "Benign" in ai_label:
-                st.success(f"✅ {ai_label}\n\n{ai_expl}")
             else:
-                st.warning(f"🤔 {ai_label}\n\n{ai_expl}")
+                st.success(f"✅ {ai_label}\n\n{ai_expl}")
 
             if include_images and images:
                 st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
@@ -209,22 +197,41 @@ with tabs[2]:
         if f.name.endswith(".csv"):
             df=pd.read_csv(f); texts=df["text"].astype(str).tolist()
         else: texts=[f.read().decode()]
+        recs=[]
         for t in texts:
             lbl,expl=call_gemini_content_check(t, [], False)
-            st.markdown("---")
-            if "Anti" in lbl or "Detected" in lbl:
-                st.error(f"🚨 {lbl}\n\n{text[:80]}...\n\n{expl}")
-            elif "Benign" in lbl:
-                st.success(f"✅ {lbl}\n\n{text[:80]}...\n\n{expl}")
-            else:
-                st.warning(f"🤔 {lbl}\n\n{text[:80]}...\n\n{expl}")
+            recs.append({"text":t[:80],"ai":lbl,"explanation":expl})
+        st.dataframe(pd.DataFrame(recs))
 
 # -----------------------------
 # TAB: Keyword DB
 # -----------------------------
 with tabs[3]:
     st.subheader("Manage Keywords")
-    st.dataframe(pd.DataFrame(keywords))
-    new=st.text_input("New keyword"); 
-    if st.button("Add") and "india" in new.lower():
-        keywords.append({"term":new,"type":"phrase","lang":"en","weight":3}); save_keywords(keywords); st.success("Added")
+
+    # Show table
+    df_keywords = pd.DataFrame(keywords)
+    st.dataframe(df_keywords, use_container_width=True)
+
+    # --- Add new keywords ---
+    st.markdown("### ➕ Add Keywords")
+    new_keywords = st.text_area("Enter keyword(s), separated by commas or new lines")
+    if st.button("Add"):
+        for kw in [x.strip() for x in re.split("[,\n]", new_keywords) if x.strip()]:
+            keywords.append({"term": kw, "type": "phrase", "language": "English", "weight": 3})
+        save_keywords(keywords)
+        st.success("✅ Keywords added successfully! Refresh to see updates.")
+
+    # --- Delete keywords ---
+    st.markdown("### ❌ Delete Keywords")
+    if keywords:
+        to_delete = st.multiselect(
+            "Select keyword(s) to delete",
+            options=[k["term"] for k in keywords]
+        )
+        if st.button("Delete Selected"):
+            keywords = [k for k in keywords if k["term"] not in to_delete]
+            save_keywords(keywords)
+            st.error(f"🗑️ Deleted {len(to_delete)} keyword(s). Refresh to see updates.")
+    else:
+        st.info("No keywords found. Add some above.")
