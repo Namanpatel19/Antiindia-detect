@@ -59,19 +59,23 @@ DEFAULT_KEYWORDS = [
     {"term": "destroy india", "type": "phrase", "lang": "en", "weight": 5},
     {"term": "traitor india", "type": "phrase", "lang": "en", "weight": 3},
 ]
+
 def ensure_keyword_file():
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
+
 def load_keywords():
     if os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or DEFAULT_KEYWORDS
     return DEFAULT_KEYWORDS
+
 def save_keywords(kws):
     with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(kws, f, allow_unicode=True)
     return True
+
 ensure_keyword_file()
 keywords = load_keywords()
 
@@ -79,6 +83,7 @@ keywords = load_keywords()
 # Helpers
 # -----------------------------
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
 @st.cache_data(show_spinner=False)
 def extract_content_from_url(url, timeout=10):
     try:
@@ -111,7 +116,7 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
         parts.append({"text": text[:2000]})
 
     if include_images:
-        for img in image_urls[:3]:  # scan up to 3 images
+        for img in image_urls[:3]:
             try:
                 img_data = requests.get(img, timeout=10).content
                 b64_data = base64.b64encode(img_data).decode("utf-8")
@@ -133,6 +138,11 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
             return ("Error", r.text[:200])
         j = r.json()
         ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
+
+        # ---- CLEAN FIX ----
+        if "```" in ai_text:
+            ai_text = ai_text.replace("```json", "").replace("```", "").strip()
+
         try:
             data = json.loads(ai_text)
             return (data.get("label","Unknown"), data.get("explanation",""))
@@ -142,48 +152,9 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
         return ("Error", str(e))
 
 # -----------------------------
-# RESULT CARD COMPONENT
-# -----------------------------
-def show_result_card(url, label, explanation, images=None, include_images=False):
-    if label.lower() in ["anti-india", "propaganda", "detected"]:
-        color = "#ff4d4f"
-        icon = "🚨"
-        title = "Anti-India Propaganda Detected"
-    elif label.lower() in ["safe", "clean", "benign"]:
-        color = "#16c60c"
-        icon = "✅"
-        title = "Content Safe"
-    else:
-        color = "#f0ad4e"
-        icon = "🤔"
-        title = "Uncertain"
-
-    st.markdown(
-        f"""
-        <div style="
-            border-radius: 14px;
-            padding: 18px;
-            margin: 15px 0;
-            background-color: {color}15;
-            border: 2px solid {color};
-        ">
-            <h4 style="margin:0; color:{color};">{icon} {title}</h4>
-            <p style="margin:4px 0 0 0; font-size:13px; color:#aaa;"><b>Source:</b> {url}</p>
-            <p style="margin-top:12px; font-size:15px; color:#e6eef6; line-height:1.5;">
-                {explanation}
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    if include_images and images:
-        st.info(f"📷 {len(images)} image(s) were analyzed for propaganda content.")
-
-# -----------------------------
 # HEADER
 # -----------------------------
-st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection Dashboard</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection By Hacksheild</h1>", unsafe_allow_html=True)
 st.write("---")
 
 # -----------------------------
@@ -192,7 +163,7 @@ st.write("---")
 tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
 
 # -----------------------------
-# TAB: Dashboard
+# TAB: Dashboard (NO GRAPH)
 # -----------------------------
 with tabs[0]:
     col1,col2,col3,col4=st.columns(4)
@@ -202,7 +173,7 @@ with tabs[0]:
     col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
 
 # -----------------------------
-# TAB: URL Scanner
+# TAB: URL Scanner (AI with optional image scanning)
 # -----------------------------
 with tabs[1]:
     st.subheader("Scan URLs with AI (Text + Optional Images)")
@@ -213,7 +184,19 @@ with tabs[1]:
         for u in [x.strip() for x in url_input.split(",") if x.strip()]:
             text, images = extract_content_from_url(u)
             ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
-            show_result_card(u, ai_label, ai_expl, images, include_images)
+
+            st.markdown("---")
+            st.markdown(f"**Source:** {u}")
+
+            if "Anti" in ai_label or "Detected" in ai_label:
+                st.error(f"🚨 {ai_label}\n\n{ai_expl}")
+            elif "Benign" in ai_label:
+                st.success(f"✅ {ai_label}\n\n{ai_expl}")
+            else:
+                st.warning(f"🤔 {ai_label}\n\n{ai_expl}")
+
+            if include_images and images:
+                st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
 
 # -----------------------------
 # TAB: File Analysis
@@ -226,34 +209,22 @@ with tabs[2]:
         if f.name.endswith(".csv"):
             df=pd.read_csv(f); texts=df["text"].astype(str).tolist()
         else: texts=[f.read().decode()]
-        recs=[]
         for t in texts:
             lbl,expl=call_gemini_content_check(t, [], False)
-            recs.append({"text":t[:80],"ai":lbl,"explanation":expl})
-        st.dataframe(pd.DataFrame(recs))
+            st.markdown("---")
+            if "Anti" in lbl or "Detected" in lbl:
+                st.error(f"🚨 {lbl}\n\n{text[:80]}...\n\n{expl}")
+            elif "Benign" in lbl:
+                st.success(f"✅ {lbl}\n\n{text[:80]}...\n\n{expl}")
+            else:
+                st.warning(f"🤔 {lbl}\n\n{text[:80]}...\n\n{expl}")
 
 # -----------------------------
 # TAB: Keyword DB
 # -----------------------------
 with tabs[3]:
     st.subheader("Manage Keywords")
-
-    df_kw = pd.DataFrame(keywords)
-    st.dataframe(df_kw)
-
-    st.write("### ➕ Add Keyword")
-    new_kw = st.text_input("Keyword / Phrase (English, Hindi, Urdu, Arabic supported)")
-    lang_choice = st.selectbox("Language", ["en", "hi", "ur", "ar"])
-    if st.button("Add Keyword"):
-        if new_kw.strip():
-            keywords.append({"term": new_kw.strip(), "type": "phrase", "lang": lang_choice, "weight": 3})
-            save_keywords(keywords)
-            st.success(f"✅ Added keyword: {new_kw} ({lang_choice})")
-
-    st.write("### ❌ Delete Keyword")
-    if keywords:
-        to_delete = st.selectbox("Select keyword to delete", [k["term"] for k in keywords])
-        if st.button("Delete Keyword"):
-            keywords = [k for k in keywords if k["term"] != to_delete]
-            save_keywords(keywords)
-            st.warning(f"🗑️ Deleted keyword: {to_delete}")
+    st.dataframe(pd.DataFrame(keywords))
+    new=st.text_input("New keyword"); 
+    if st.button("Add") and "india" in new.lower():
+        keywords.append({"term":new,"type":"phrase","lang":"en","weight":3}); save_keywords(keywords); st.success("Added")
