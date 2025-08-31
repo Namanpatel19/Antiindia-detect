@@ -371,3 +371,41 @@
   type: "phrase"
   language: "Urdu"
   weight: 4
+- term: "Fr33 K@shm1r"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "Ind!a Murd@b@d"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "B0ycott_Bollywood"
+  type: "hashtag"
+  language: "English"
+  weight: 3
+- term: "EndH!ndutva"
+  type: "keyword"
+  language: "English"
+  weight: 4
+- term: "Kashm1r_N0t_Ind!a"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "Tra!tor_Indians"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "Bharat T3rr0rist"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "Ind!a = F@scist"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "D3stroy_Bharat"
+  type: "phrase"
+  language: "English"
+  weight: 5
+  
+
