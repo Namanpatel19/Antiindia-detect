@@ -1,0 +1,373 @@
+# ---------- English ----------
+- term: "boycott india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "down with india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "destroy india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "anti-india"
+  type: "keyword"
+  language: "English"
+  weight: 3
+- term: "traitor india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "#freekashmir"
+  type: "hashtag"
+  language: "English"
+  weight: 5
+- term: "#boycottindia"
+  type: "hashtag"
+  language: "English"
+  weight: 4
+- term: "india terrorist"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "free khalistan"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "boycott bollywood"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "india genocide"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "burn indian flag"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "modi dictator"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "isolate india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "punish india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "hate india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "indian dogs"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "india oppressor"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "modi fascist"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "end india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "kill indians"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "ban india"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "shame on india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "stop india"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "boycott indian products"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "dismantle india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "break india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "indian regime"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "modi murderer"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "indian fascism"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "abolish india"
+  type: "phrase"
+  language: "English"
+  weight: 5
+- term: "no india"
+  type: "phrase"
+  language: "English"
+  weight: 3
+- term: "remove india"
+  type: "phrase"
+  language: "English"
+  weight: 4
+- term: "khalistan zindabad"
+  type: "phrase"
+  language: "English"
+  weight: 5
+
+# ---------- Hindi ----------
+- term: "भारत विरोधी"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत मुर्दाबाद"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत को नष्ट करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत जलाओ"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "मोदी हटाओ"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत गद्दार"
+  type: "phrase"
+  language: "Hindi"
+  weight: 3
+- term: "हिंदुस्तान खत्म"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत आतंकवादी"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत अलग करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत बहिष्कार"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत जलाओ आंदोलन"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत के खिलाफ"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत शर्म करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत का अंत"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "मोदी गद्दार"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत छोड़ो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "मोदी हटाओ सरकार"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत खत्म करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "मोदी फासीवादी"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत धोखेबाज"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारतीय कुत्ते"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत जलाओ आंदोलन"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत तोड़ो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत बहिष्कार करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत के खिलाफ आंदोलन"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत दुश्मन"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत को खत्म करो"
+  type: "phrase"
+  language: "Hindi"
+  weight: 5
+- term: "भारत जलाओ अभियान"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+- term: "भारत विरोध आंदोलन"
+  type: "phrase"
+  language: "Hindi"
+  weight: 4
+
+# ---------- Urdu ----------
+- term: "بھارت مردہ باد"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت کو تباہ کرو"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت جلاؤ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "مودی غدار"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "آزاد کشمیر"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "ہندوستان ختم"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت دہشت گرد"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت کا بائیکاٹ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "مودی مردہ باد"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "ہندوستان جلاؤ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت کے خلاف"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت ذلیل"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "مودی دہشت گرد"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "مودی ختم"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت کا دشمن"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "مودی کا خاتمہ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت شرمندہ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت توڑو"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت کے خلاف احتجاج"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت کو ختم کرو"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت جلاؤ تحریک"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت غدار"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "مودی فاشسٹ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت بدنام"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت دشمن"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت پر پابندی"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
+- term: "بھارت ختم کرو"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "بھارت مخالف"
+  type: "phrase"
+  language: "Urdu"
+  weight: 5
+- term: "مودی ہٹاؤ"
+  type: "phrase"
+  language: "Urdu"
+  weight: 4
