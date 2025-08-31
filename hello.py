@@ -3,7 +3,7 @@
 Anti-India Campaign Detection — Cybersecurity Dashboard Style
 """
 
-import os, re, yaml, requests, base64, json
+import os, yaml, requests, base64, json
 import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -23,10 +23,7 @@ st.set_page_config(page_title="Anti-India Campaign Detector", page_icon="🛡️
 st.markdown(
     """
     <style>
-    .stApp { 
-        background-color: var(--background-color, #0f1720); 
-        color: var(--text-color, #e6eef6);
-    }
+    .stApp { background-color: #0f1720; color: #e6eef6; }
     .metric-card {
         padding:20px; border-radius:15px;
         background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
@@ -35,16 +32,17 @@ st.markdown(
     }
     .stTabs [role="tablist"] {
         display:flex; justify-content:center; gap:10px;
-        background:#f5f5f5; padding:10px; border-radius:12px;
+        background:#1E1E1E; padding:10px; border-radius:12px;
     }
     .stTabs [role="tab"] {
-        background:#e0e0e0; color:#333; padding:10px 20px;
+        background:#2C2F38; color:white; padding:10px 20px;
         border-radius:10px; font-weight:bold;
     }
     .stTabs [role="tab"][aria-selected="true"] {
         background:linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
         color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
     }
+    .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
     </style>
     """, unsafe_allow_html=True
 )
@@ -53,21 +51,52 @@ st.markdown(
 # Keyword DB
 # -----------------------------
 KEYWORD_FILE = "keywords.yaml"
+DEFAULT_KEYWORDS = [
+    {"term": "boycott india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "#freekashmir", "type": "hashtag", "language": "English", "weight": 5},
+    {"term": "down with india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "anti-india", "type": "keyword", "language": "English", "weight": 3},
+    {"term": "destroy india", "type": "phrase", "language": "English", "weight": 5},
+    {"term": "traitor india", "type": "phrase", "language": "English", "weight": 3},
+]
 
 def ensure_keyword_file():
+    """Create file with defaults only if keywords.yaml does not exist."""
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
-            yaml.safe_dump([], f, allow_unicode=True)
+            yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
 
 def load_keywords():
-    if os.path.exists(KEYWORD_FILE):
-        with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
-            kws = yaml.safe_load(f) or []
-    else:
-        kws = []
-    return kws
+    """Always load from YAML, fallback to defaults if empty."""
+    try:
+        if os.path.exists(KEYWORD_FILE):
+            with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
+                kws = yaml.safe_load(f) or []
+        else:
+            kws = []
+
+        # If still empty → fallback
+        if not kws:
+            kws = DEFAULT_KEYWORDS
+
+        # Ensure all fields are correct
+        migrated = []
+        for kw in kws:
+            if "language" not in kw:
+                kw["language"] = "English"
+            if "type" not in kw:
+                kw["type"] = "phrase"
+            if "weight" not in kw:
+                kw["weight"] = 3
+            migrated.append(kw)
+
+        return migrated
+    except Exception as e:
+        st.error(f"⚠️ Error loading keywords: {e}")
+        return DEFAULT_KEYWORDS
 
 def save_keywords(kws):
+    """Save keywords to YAML file."""
     with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(kws, f, allow_unicode=True)
 
@@ -182,7 +211,7 @@ with tabs[1]:
 
             st.markdown("---")
             st.markdown(f"**{u}**")
-            if "Anti" in ai_label or "Detected" in ai_label or "Harmful" in ai_label:
+            if "Anti" in ai_label or "Detected" in ai_label:
                 st.error(f"🚨 {ai_label}\n\n{ai_expl}")
             else:
                 st.success(f"✅ {ai_label}\n\n{ai_expl}")
