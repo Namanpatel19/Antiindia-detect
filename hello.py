@@ -1,169 +1,251 @@
 # app.py
-import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-import yaml
-import re
-import pandas as pd
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
-from textblob import TextBlob
-import networkx as nx
-import io
-import os
-from datetime import datetime
-from collections import Counter
+"""
+Anti-India Campaign Detection — Cybersecurity Dashboard Style
+"""
 
-# ============ SETTINGS ============
-st.set_page_config(page_title="AI Threat Scanner", layout="wide")
+import os, re, yaml, requests, base64, json
+import pandas as pd
+import streamlit as st
+from bs4 import BeautifulSoup
+from langdetect import detect
+
+# -----------------------------
+# CONFIG
+# -----------------------------
+GEMINI_API_KEY = st.secrets.get("gemini", "")   # Put your Gemini API key in Streamlit secrets
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# -----------------------------
+# Streamlit page config & CSS
+# -----------------------------
+st.set_page_config(page_title="Anti-India Campaign Detector", page_icon="🛡️", layout="wide")
+
 st.markdown(
     """
     <style>
-    body {background-color: #0e1117; color: #fafafa;}
-    .stTextInput > div > div > input {background-color: #1e222a; color: #fafafa;}
-    .stTextArea textarea {background-color: #1e222a; color: #fafafa;}
-    .stButton button {background-color: #6c63ff; color: white; border-radius: 8px; font-weight: bold;}
-    .stDataFrame {background-color: #0e1117; color: #fafafa;}
-    .stMarkdown {color: #fafafa;}
+    .stApp { background-color: #0f1720; color: #e6eef6; }
+    .metric-card {
+        padding:20px; border-radius:15px;
+        background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+        color:white; text-align:center; font-weight:bold;
+        box-shadow:0 4px 15px rgba(0,0,0,0.3);
+    }
+    .stTabs [role="tablist"] {
+        display:flex; justify-content:center; gap:10px;
+        background:#1E1E1E; padding:10px; border-radius:12px;
+    }
+    .stTabs [role="tab"] {
+        background:#2C2F38; color:white; padding:10px 20px;
+        border-radius:10px; font-weight:bold;
+    }
+    .stTabs [role="tab"][aria-selected="true"] {
+        background:linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+        color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
+    }
+    .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
     </style>
-    """,
-    unsafe_allow_html=True,
+    """, unsafe_allow_html=True
 )
 
-# ============ FILE STORAGE ============
+# -----------------------------
+# Keyword DB
+# -----------------------------
 KEYWORD_FILE = "keywords.yaml"
 DEFAULT_KEYWORDS = [
-    {"term": "attack", "type": "phrase", "language": "en", "weight": 3},
-    {"term": "exploit", "type": "phrase", "language": "en", "weight": 3},
-    {"term": "phishing", "type": "phrase", "language": "en", "weight": 3},
-    {"term": "malware", "type": "phrase", "language": "en", "weight": 3},
-    {"term": "hack", "type": "phrase", "language": "en", "weight": 3},
-    {"term": "breach", "type": "phrase", "language": "en", "weight": 3},
+    {"term": "boycott india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "#freekashmir", "type": "hashtag", "language": "English", "weight": 5},
+    {"term": "down with india", "type": "phrase", "language": "English", "weight": 4},
+    {"term": "anti-india", "type": "keyword", "language": "English", "weight": 3},
+    {"term": "destroy india", "type": "phrase", "language": "English", "weight": 5},
+    {"term": "traitor india", "type": "phrase", "language": "English", "weight": 3},
 ]
 
 def ensure_keyword_file():
-    """Create file with defaults only if keywords.yaml does not exist."""
     if not os.path.exists(KEYWORD_FILE):
         with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
 
-def detect_language(term: str) -> str:
-    """Very simple language detector placeholder."""
-    return "en"
-
 def load_keywords():
-    """Always load all keywords from YAML file without overwriting user content."""
-    try:
-        if os.path.exists(KEYWORD_FILE):
-            with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
-                kws = yaml.safe_load(f) or []
-        else:
-            kws = DEFAULT_KEYWORDS
+    if os.path.exists(KEYWORD_FILE):
+        with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
+            kws = yaml.safe_load(f) or DEFAULT_KEYWORDS
+    else:
+        kws = DEFAULT_KEYWORDS
 
-        migrated = []
-        for kw in kws:
-            if isinstance(kw, str):  # in case plain terms are added
-                kw = {"term": kw, "type": "phrase", "language": detect_language(kw), "weight": 3}
-            if "language" not in kw:
-                kw["language"] = detect_language(kw["term"])
-            if "type" not in kw:
-                kw["type"] = "phrase"
-            if "weight" not in kw:
-                kw["weight"] = 3
-            migrated.append(kw)
+    migrated = []
+    for kw in kws:
+        if "lang" in kw:
+            kw["language"] = kw.pop("lang")
+        if "language" not in kw:
+            kw["language"] = "English"
+        if "type" not in kw:
+            kw["type"] = "phrase"
+        migrated.append(kw)
 
-        return migrated
+    save_keywords(migrated)
+    return migrated
 
-    except Exception as e:
-        st.error(f"⚠️ Error loading keywords: {e}")
-        return DEFAULT_KEYWORDS
+def save_keywords(kws):
+    with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(kws, f, allow_unicode=True)
 
-# ============ ANALYSIS UTILS ============
-def analyze_text(text, keywords):
-    """Simple keyword + sentiment analysis."""
-    results = []
-    for kw in keywords:
-        term = kw["term"]
-        count = len(re.findall(rf"\b{re.escape(term)}\b", text, re.IGNORECASE))
-        if count > 0:
-            results.append({"keyword": term, "count": count, "weight": kw["weight"]})
-    sentiment = TextBlob(text).sentiment
-    return results, sentiment
-
-def scrape_url(url):
-    """Fetch website text content."""
-    try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, "html.parser")
-            return soup.get_text(" ", strip=True)
-        else:
-            return ""
-    except Exception:
-        return ""
-
-# ============ MAIN UI ============
-st.title("🛡️ AI Threat Scanner")
-
-menu = st.sidebar.radio("📌 Navigation", ["📊 Dashboard", "🔎 URL Scanner", "📂 File Analyzer", "🗂️ Keyword DB"])
-
+ensure_keyword_file()
 keywords = load_keywords()
 
-# ---------- Dashboard ----------
-if menu == "📊 Dashboard":
-    st.subheader("📊 Threat Intelligence Dashboard")
-    st.info("Monitor extracted insights, keyword trends, and sentiment from sources.")
+# -----------------------------
+# Helpers
+# -----------------------------
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-    # Wordcloud
-    all_terms = [kw["term"] for kw in keywords]
-    wordcloud = WordCloud(width=800, height=400, background_color="black").generate(" ".join(all_terms))
-    st.image(wordcloud.to_array(), caption="Keyword Cloud")
+@st.cache_data(show_spinner=False)
+def extract_content_from_url(url, timeout=10):
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout); r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        text = " ".join([p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3","li"])])
+        images = [img["src"] for img in soup.find_all("img") if img.get("src")]
+        from urllib.parse import urljoin
+        images = [urljoin(url, i) for i in images]
+        return text, images
+    except:
+        return "", []
 
-    # Show keyword DB
-    df_kw = pd.DataFrame(keywords)
-    st.dataframe(df_kw, use_container_width=True)
+def detect_language(word):
+    try:
+        code = detect(word)
+        if code == "hi":
+            return "Hindi"
+        elif code == "ur":
+            return "Urdu"
+        else:
+            return "English"
+    except:
+        return "English"
 
-# ---------- URL Scanner ----------
-elif menu == "🔎 URL Scanner":
-    st.subheader("🔎 Scan URLs with AI (Text + Optional Images)")
-    urls = st.text_area("Enter URL(s), comma-separated").split(",")
-    include_img = st.checkbox("🔍 Include images in scan")
+def call_gemini_content_check(text, image_urls=[], include_images=False):
+    if not GEMINI_API_KEY:
+        return ("NoKey", "Gemini API key not set.")
+
+    prompt = """
+    Detect if this content (text and/or images) contains Anti-India propaganda, 
+    hate speech, or coordinated campaigns.
+    Language may be English, Hindi, Urdu, or Arabic.
+    Reply strictly in JSON with fields: "label" and "explanation".
+    """
+
+    parts = [{"text": prompt}]
+    if text.strip():
+        parts.append({"text": text[:2000]})
+    if include_images:
+        for img in image_urls[:3]:
+            try:
+                img_data = requests.get(img, timeout=10).content
+                b64_data = base64.b64encode(img_data).decode("utf-8")
+                parts.append({"inline_data": {"mime_type":"image/jpeg","data":b64_data}})
+            except:
+                continue
+
+    payload = {"contents":[{"parts": parts}]}
+    headers = {"Content-Type":"application/json","X-goog-api-key":GEMINI_API_KEY}
+
+    try:
+        r = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=40)
+        if r.status_code != 200:
+            return ("Error", r.text[:200])
+        j = r.json()
+        ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
+        try:
+            data = json.loads(ai_text)
+            return (data.get("label","Unknown"), data.get("explanation",""))
+        except:
+            return ("Result", ai_text)
+    except Exception as e:
+        return ("Error", str(e))
+
+# -----------------------------
+# HEADER
+# -----------------------------
+st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection Dashboard</h1>", unsafe_allow_html=True)
+st.write("---")
+
+# -----------------------------
+# TABS
+# -----------------------------
+tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
+
+# -----------------------------
+# TAB: Dashboard
+# -----------------------------
+with tabs[0]:
+    col1,col2,col3,col4=st.columns(4)
+    col1.markdown(f"<div class='metric-card'><h3>{len(keywords)}</h3><p>Keywords</p></div>",unsafe_allow_html=True)
+    col2.markdown(f"<div class='metric-card'><h3>29</h3><p>High-Risk Events</p></div>",unsafe_allow_html=True)
+    col3.markdown(f"<div class='metric-card'><h3>08</h3><p>Risky Activities</p></div>",unsafe_allow_html=True)
+    col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
+
+# -----------------------------
+# TAB: URL Scanner
+# -----------------------------
+with tabs[1]:
+    st.subheader("Scan URLs with AI (Text + Optional Images)")
+    url_input = st.text_input("Enter URL(s), comma-separated")
+    include_images = st.checkbox("🔎 Include images in scan", value=False)
 
     if st.button("Scan"):
-        for url in urls:
-            url = url.strip()
-            if not url:
-                continue
-            st.write(f"🌐 Scanning {url} ...")
-            text = scrape_url(url)
-            if text:
-                results, sentiment = analyze_text(text, keywords)
-                st.write(f"Sentiment → Polarity: {sentiment.polarity:.2f}, Subjectivity: {sentiment.subjectivity:.2f}")
-                if results:
-                    df = pd.DataFrame(results)
-                    st.dataframe(df)
-                else:
-                    st.warning("No keywords detected.")
+        for u in [x.strip() for x in url_input.split(",") if x.strip()]:
+            text, images = extract_content_from_url(u)
+            ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
+
+            st.markdown("---")
+            st.markdown(f"**{u}**")
+            if "Anti" in ai_label or "Detected" in ai_label:
+                st.error(f"🚨 {ai_label}\n\n{ai_expl}")
             else:
-                st.error("❌ Could not fetch content.")
+                st.success(f"✅ {ai_label}\n\n{ai_expl}")
 
-# ---------- File Analyzer ----------
-elif menu == "📂 File Analyzer":
-    st.subheader("📂 Upload & Analyze Files")
-    uploaded = st.file_uploader("Upload text file", type=["txt", "md"])
-    if uploaded:
-        text = uploaded.read().decode("utf-8", errors="ignore")
-        results, sentiment = analyze_text(text, keywords)
-        st.write(f"Sentiment → Polarity: {sentiment.polarity:.2f}, Subjectivity: {sentiment.subjectivity:.2f}")
-        if results:
-            df = pd.DataFrame(results)
-            st.dataframe(df)
-        else:
-            st.warning("No keywords detected.")
+            if include_images and images:
+                st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
 
-# ---------- Keyword DB ----------
-elif menu == "🗂️ Keyword DB":
-    st.subheader("🗂️ Keyword Database")
-    df_kw = pd.DataFrame(load_keywords())
-    st.dataframe(df_kw, use_container_width=True)
-    st.info("Edit `keywords.yaml` manually to add or modify keywords. They will auto-refresh here.")
+# -----------------------------
+# TAB: File Analysis
+# -----------------------------
+with tabs[2]:
+    st.subheader("Analyze CSV/TXT")
+    f=st.file_uploader("Upload file",type=["csv","txt"])
+    if f and st.button("Analyze"):
+        texts=[]
+        if f.name.endswith(".csv"):
+            df=pd.read_csv(f); texts=df["text"].astype(str).tolist()
+        else: texts=[f.read().decode()]
+        recs=[]
+        for t in texts:
+            lbl,expl=call_gemini_content_check(t, [], False)
+            recs.append({"text":t[:80],"ai":lbl,"explanation":expl})
+        st.dataframe(pd.DataFrame(recs))
+
+# -----------------------------
+# TAB: Keyword DB
+# -----------------------------
+with tabs[3]:
+    st.subheader("Manage Keywords")
+
+    df_kw = pd.DataFrame(keywords)
+    st.dataframe(df_kw)
+
+    # Add keyword
+    new = st.text_input("New keyword") 
+    if st.button("Add Keyword"):
+        if new.strip():
+            lang = detect_language(new)
+            keywords.append({"term": new.strip(), "type":"phrase", "language":lang, "weight":3})
+            save_keywords(keywords)
+            st.success(f"✅ Keyword added as {lang}! Refresh to see changes")
+
+    # Delete multiple keywords
+    st.write("### Delete Keywords")
+    to_delete = st.multiselect("Select keywords to delete", [kw["term"] for kw in keywords])
+    if st.button("Delete Selected"):
+        keywords = [kw for kw in keywords if kw["term"] not in to_delete]
+        save_keywords(keywords)
+        st.success("🗑️ Selected keywords deleted! Refresh to see changes")
+
