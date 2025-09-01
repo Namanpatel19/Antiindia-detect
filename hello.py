@@ -1,6 +1,6 @@
 # app.py
 """
-Anti-India Campaign Detection — Cybersecurity Dashboard Style
+Anti-India Campaign Detection — Cybersecurity Dashboard Style (Final Fixed Version)
 """
 
 import os, re, yaml, requests, base64, json
@@ -103,9 +103,11 @@ def extract_content_from_url(url, timeout=10):
         r = requests.get(url, headers=HEADERS, timeout=timeout); r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         text = " ".join([p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3","li"])])
+
         images = [img["src"] for img in soup.find_all("img") if img.get("src")]
         from urllib.parse import urljoin
         images = [urljoin(url, i) for i in images]
+
         return text, images
     except:
         return "", []
@@ -122,6 +124,23 @@ def detect_language(word):
     except:
         return "English"
 
+def safe_fetch_image(img_url):
+    """Fetch image and only return if it's jpeg/png with data"""
+    try:
+        resp = requests.get(img_url, timeout=10, headers=HEADERS)
+        if resp.status_code == 200 and len(resp.content) > 100:
+            ctype = resp.headers.get("Content-Type", "").lower()
+            if "jpeg" in ctype or "jpg" in ctype:
+                mime = "image/jpeg"
+            elif "png" in ctype:
+                mime = "image/png"
+            else:
+                return None
+            return base64.b64encode(resp.content).decode("utf-8"), mime
+    except:
+        return None
+    return None
+
 def call_gemini_content_check(text, image_urls=[], include_images=False):
     if not GEMINI_API_KEY:
         return ("NoKey", "Gemini API key not set.")
@@ -136,14 +155,13 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
     parts = [{"text": prompt}]
     if text.strip():
         parts.append({"text": text[:2000]})
+
     if include_images:
         for img in image_urls[:3]:
-            try:
-                img_data = requests.get(img, timeout=10).content
-                b64_data = base64.b64encode(img_data).decode("utf-8")
-                parts.append({"inline_data": {"mime_type":"image/jpeg","data":b64_data}})
-            except:
-                continue
+            result = safe_fetch_image(img)
+            if result:
+                b64_data, mime = result
+                parts.append({"inline_data": {"mime_type": mime, "data": b64_data}})
 
     payload = {"contents":[{"parts": parts}]}
     headers = {"Content-Type":"application/json","X-goog-api-key":GEMINI_API_KEY}
@@ -248,4 +266,3 @@ with tabs[3]:
         keywords = [kw for kw in keywords if kw["term"] not in to_delete]
         save_keywords(keywords)
         st.success("🗑️ Selected keywords deleted! Refresh to see changes")
-
