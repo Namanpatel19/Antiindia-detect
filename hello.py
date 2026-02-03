@@ -1,19 +1,20 @@
 # app.py
 """
-Anti-India Campaign Detection — Cybersecurity Dashboard Style (Final Fixed Version)
+Anti-India Campaign Detection — Exhibition Safe Version (Groq API)
 """
 
-import os, re, yaml, requests, base64, json
+import os, re, yaml, requests, json
 import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 from langdetect import detect
+from groq import Groq
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-GEMINI_API_KEY = st.secrets.get("gemini", "")   # Put your Gemini API key in Streamlit secrets
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+client = Groq(api_key=GROQ_API_KEY)
 
 # -----------------------------
 # Streamlit page config & CSS
@@ -30,19 +31,6 @@ st.markdown(
         color:white; text-align:center; font-weight:bold;
         box-shadow:0 4px 15px rgba(0,0,0,0.3);
     }
-    .stTabs [role="tablist"] {
-        display:flex; justify-content:center; gap:10px;
-        background:#1E1E1E; padding:10px; border-radius:12px;
-    }
-    .stTabs [role="tab"] {
-        background:#2C2F38; color:white; padding:10px 20px;
-        border-radius:10px; font-weight:bold;
-    }
-    .stTabs [role="tab"][aria-selected="true"] {
-        background:linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
-        color:white; box-shadow:0 4px 10px rgba(0,0,0,0.4);
-    }
-    .badge { padding:6px 10px; border-radius:999px; font-weight:600; }
     </style>
     """, unsafe_allow_html=True
 )
@@ -55,39 +43,20 @@ DEFAULT_KEYWORDS = [
     {"term": "boycott india", "type": "phrase", "language": "English", "weight": 4},
     {"term": "#freekashmir", "type": "hashtag", "language": "English", "weight": 5},
     {"term": "down with india", "type": "phrase", "language": "English", "weight": 4},
-    {"term": "anti-india", "type": "keyword", "language": "English", "weight": 3},
-    {"term": "destroy india", "type": "phrase", "language": "English", "weight": 5},
-    {"term": "traitor india", "type": "phrase", "language": "English", "weight": 3},
 ]
 
 def ensure_keyword_file():
     if not os.path.exists(KEYWORD_FILE):
-        with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
-            yaml.safe_dump(DEFAULT_KEYWORDS, f, allow_unicode=True)
+        with open(KEYWORD_FILE, "w") as f:
+            yaml.safe_dump(DEFAULT_KEYWORDS, f)
 
 def load_keywords():
-    if os.path.exists(KEYWORD_FILE):
-        with open(KEYWORD_FILE, "r", encoding="utf-8") as f:
-            kws = yaml.safe_load(f) or DEFAULT_KEYWORDS
-    else:
-        kws = DEFAULT_KEYWORDS
-
-    migrated = []
-    for kw in kws:
-        if "lang" in kw:
-            kw["language"] = kw.pop("lang")
-        if "language" not in kw:
-            kw["language"] = "English"
-        if "type" not in kw:
-            kw["type"] = "phrase"
-        migrated.append(kw)
-
-    save_keywords(migrated)
-    return migrated
+    with open(KEYWORD_FILE, "r") as f:
+        return yaml.safe_load(f) or DEFAULT_KEYWORDS
 
 def save_keywords(kws):
-    with open(KEYWORD_FILE, "w", encoding="utf-8") as f:
-        yaml.safe_dump(kws, f, allow_unicode=True)
+    with open(KEYWORD_FILE, "w") as f:
+        yaml.safe_dump(kws, f)
 
 ensure_keyword_file()
 keywords = load_keywords()
@@ -98,87 +67,46 @@ keywords = load_keywords()
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 @st.cache_data(show_spinner=False)
-def extract_content_from_url(url, timeout=10):
+def extract_content_from_url(url):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout); r.raise_for_status()
+        r = requests.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
-        text = " ".join([p.get_text(" ", strip=True) for p in soup.find_all(["p","h1","h2","h3","li"])])
-
-        images = [img["src"] for img in soup.find_all("img") if img.get("src")]
-        from urllib.parse import urljoin
-        images = [urljoin(url, i) for i in images]
-
-        return text, images
+        text = " ".join(p.get_text() for p in soup.find_all(["p","h1","h2","li"]))
+        return text
     except:
-        return "", []
+        return ""
 
 def detect_language(word):
     try:
-        code = detect(word)
-        if code == "hi":
-            return "Hindi"
-        elif code == "ur":
-            return "Urdu"
-        else:
-            return "English"
+        return detect(word)
     except:
-        return "English"
+        return "en"
 
-def safe_fetch_image(img_url):
-    """Fetch image and only return if it's jpeg/png with data"""
-    try:
-        resp = requests.get(img_url, timeout=10, headers=HEADERS)
-        if resp.status_code == 200 and len(resp.content) > 100:
-            ctype = resp.headers.get("Content-Type", "").lower()
-            if "jpeg" in ctype or "jpg" in ctype:
-                mime = "image/jpeg"
-            elif "png" in ctype:
-                mime = "image/png"
-            else:
-                return None
-            return base64.b64encode(resp.content).decode("utf-8"), mime
-    except:
-        return None
-    return None
+def call_ai_content_check(text):
+    prompt = f"""
+    Detect if the following content contains Anti-India propaganda,
+    hate speech, or coordinated online campaigns.
 
-def call_gemini_content_check(text, image_urls=[], include_images=False):
-    if not GEMINI_API_KEY:
-        return ("NoKey", "Gemini API key not set.")
+    Reply strictly in JSON:
+    {{
+      "label": "...",
+      "explanation": "..."
+    }}
 
-    prompt = """
-    Detect if this content (text and/or images) contains Anti-India propaganda, 
-    hate speech, or coordinated campaigns.
-    Language may be English, Hindi, Urdu, or Arabic.
-    Reply strictly in JSON with fields: "label" and "explanation".
+    Content:
+    {text[:3000]}
     """
 
-    parts = [{"text": prompt}]
-    if text.strip():
-        parts.append({"text": text[:2000]})
-
-    if include_images:
-        for img in image_urls[:3]:
-            result = safe_fetch_image(img)
-            if result:
-                b64_data, mime = result
-                parts.append({"inline_data": {"mime_type": mime, "data": b64_data}})
-
-    payload = {"contents":[{"parts": parts}]}
-    headers = {"Content-Type":"application/json","X-goog-api-key":GEMINI_API_KEY}
-
     try:
-        r = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=40)
-        if r.status_code != 200:
-            return ("Error", r.text[:200])
-        j = r.json()
-        ai_text = j.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
-        try:
-            data = json.loads(ai_text)
-            return (data.get("label","Unknown"), data.get("explanation",""))
-        except:
-            return ("Result", ai_text)
+        chat = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        data = json.loads(chat.choices[0].message.content)
+        return data["label"], data["explanation"]
     except Exception as e:
-        return ("Error", str(e))
+        return "Error", str(e)
 
 # -----------------------------
 # HEADER
@@ -186,83 +114,69 @@ def call_gemini_content_check(text, image_urls=[], include_images=False):
 st.markdown("<h1 style='text-align:center'>🛡️ Anti-India Campaign Detection Dashboard</h1>", unsafe_allow_html=True)
 st.write("---")
 
-# -----------------------------
-# TABS
-# -----------------------------
 tabs = st.tabs(["📊 Dashboard","🔍 URL Scanner","📂 File Analysis","📝 Keyword DB"])
 
 # -----------------------------
-# TAB: Dashboard
+# Dashboard
 # -----------------------------
 with tabs[0]:
-    col1,col2,col3,col4=st.columns(4)
+    col1,col2,col3 = st.columns(3)
     col1.markdown(f"<div class='metric-card'><h3>{len(keywords)}</h3><p>Keywords</p></div>",unsafe_allow_html=True)
-    col2.markdown(f"<div class='metric-card'><h3>29</h3><p>High-Risk Events</p></div>",unsafe_allow_html=True)
-    col3.markdown(f"<div class='metric-card'><h3>08</h3><p>Risky Activities</p></div>",unsafe_allow_html=True)
-    col4.markdown(f"<div class='metric-card'><h3>06</h3><p>High-Risk Users</p></div>",unsafe_allow_html=True)
+    col2.markdown("<div class='metric-card'><h3>Live</h3><p>AI Monitoring</p></div>",unsafe_allow_html=True)
+    col3.markdown("<div class='metric-card'><h3>Cyber</h3><p>Threat Analysis</p></div>",unsafe_allow_html=True)
 
 # -----------------------------
-# TAB: URL Scanner
+# URL Scanner
 # -----------------------------
 with tabs[1]:
-    st.subheader("Scan URLs with AI (Text + Optional Images)")
-    url_input = st.text_input("Enter URL(s), comma-separated")
-    include_images = st.checkbox("🔎 Include images in scan", value=False)
+    st.subheader("Scan URLs with AI")
+    url = st.text_input("Enter URL")
 
-    if st.button("Scan"):
-        for u in [x.strip() for x in url_input.split(",") if x.strip()]:
-            text, images = extract_content_from_url(u)
-            ai_label, ai_expl = call_gemini_content_check(text, images, include_images)
+    if st.button("Scan URL"):
+        text = extract_content_from_url(url)
+        label, expl = call_ai_content_check(text)
 
-            st.markdown("---")
-            st.markdown(f"**{u}**")
-            if "Anti" in ai_label or "Detected" in ai_label:
-                st.error(f"🚨 {ai_label}\n\n{ai_expl}")
-            else:
-                st.success(f"✅ {ai_label}\n\n{ai_expl}")
-
-            if include_images and images:
-                st.info(f"📷 {min(len(images),3)} image(s) were also analyzed for propaganda content.")
+        if "Anti" in label or "Detected" in label:
+            st.error(f"🚨 {label}\n\n{expl}")
+        else:
+            st.success(f"✅ {label}\n\n{expl}")
 
 # -----------------------------
-# TAB: File Analysis
+# File Analysis
 # -----------------------------
 with tabs[2]:
-    st.subheader("Analyze CSV/TXT")
-    f=st.file_uploader("Upload file",type=["csv","txt"])
+    st.subheader("Analyze Text / CSV")
+    f = st.file_uploader("Upload file", type=["txt","csv"])
+
     if f and st.button("Analyze"):
-        texts=[]
+        texts = []
         if f.name.endswith(".csv"):
-            df=pd.read_csv(f); texts=df["text"].astype(str).tolist()
-        else: texts=[f.read().decode()]
-        recs=[]
+            df = pd.read_csv(f)
+            texts = df.iloc[:,0].astype(str).tolist()
+        else:
+            texts = [f.read().decode()]
+
+        results = []
         for t in texts:
-            lbl,expl=call_gemini_content_check(t, [], False)
-            recs.append({"text":t[:80],"ai":lbl,"explanation":expl})
-        st.dataframe(pd.DataFrame(recs))
+            lbl, expl = call_ai_content_check(t)
+            results.append({"Text": t[:80], "Label": lbl, "Explanation": expl})
+
+        st.dataframe(pd.DataFrame(results))
 
 # -----------------------------
-# TAB: Keyword DB
+# Keyword DB
 # -----------------------------
 with tabs[3]:
     st.subheader("Manage Keywords")
+    st.dataframe(pd.DataFrame(keywords))
 
-    df_kw = pd.DataFrame(keywords)
-    st.dataframe(df_kw)
-
-    # Add keyword
-    new = st.text_input("New keyword") 
-    if st.button("Add Keyword"):
-        if new.strip():
-            lang = detect_language(new)
-            keywords.append({"term": new.strip(), "type":"phrase", "language":lang, "weight":3})
-            save_keywords(keywords)
-            st.success(f"✅ Keyword added as {lang}! Refresh to see changes")
-
-    # Delete multiple keywords
-    st.write("### Delete Keywords")
-    to_delete = st.multiselect("Select keywords to delete", [kw["term"] for kw in keywords])
-    if st.button("Delete Selected"):
-        keywords = [kw for kw in keywords if kw["term"] not in to_delete]
+    new_kw = st.text_input("Add new keyword")
+    if st.button("Add"):
+        keywords.append({
+            "term": new_kw,
+            "type": "phrase",
+            "language": detect_language(new_kw),
+            "weight": 3
+        })
         save_keywords(keywords)
-        st.success("🗑️ Selected keywords deleted! Refresh to see changes")
+        st.success("Keyword added! Refresh app.")
